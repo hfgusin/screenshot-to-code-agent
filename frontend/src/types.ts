@@ -35,6 +35,63 @@ export interface DesignSystem {
   updatedAt: string;
 }
 
+export interface DesignSession {
+  goal: string;
+  constraints: string;
+  style: string;
+  references: string;
+  revisionLog: string[];
+  lastUpdatedAt: string | null;
+}
+
+export interface DesignUpdateIntent {
+  target: string;
+  intent: string;
+  placement: string;
+  alignment: string;
+  preserve: string[];
+}
+
+export interface AgentStageTimings {
+  requestParseMs?: number;
+  promptBuildMs?: number;
+  modelGenerationMs?: number;
+  toolRuntimeMs?: number;
+  imageGenerationMs?: number;
+  previewSelfCheckMs?: number;
+  workspacePersistMs?: number;
+}
+
+export interface AgentTargetingDiagnostics {
+  score: number;
+  changedInsideTarget: boolean;
+  preservedOutsideTarget: boolean;
+  intentMatched: boolean;
+  collateralDamage: boolean;
+  targetSummary?: string;
+  preserveViolations?: string[];
+  changedSignals?: string[];
+}
+
+export interface AgentImageUpdateStatus {
+  operation: "create" | "edit" | "fallback";
+  status: "ok" | "error";
+  sourceImageUrl?: string | null;
+  persistedAssetUrl?: string | null;
+  assetId?: string | null;
+  parentAssetId?: string | null;
+  message?: string;
+}
+
+export type PreviewSelfCheckStatus = "pass" | "warn" | "fail";
+
+export interface PreviewSelfCheckResult {
+  status: PreviewSelfCheckStatus;
+  summary: string;
+  issues: string[];
+  isRenderable: boolean;
+}
+
 export enum AppState {
   INITIAL = "INITIAL",
   CODING = "CODING",
@@ -61,9 +118,17 @@ export interface PromptContent {
   // Full instruction for the model when it differs from `text`
   // (e.g. includes the selected-element reference)
   fullText?: string;
+  workspaceId?: string;
+  selectedElementHtml?: string; // Raw HTML of selected element (for display only)
+  selectedElementContext?: string;
+  revisionId?: string;
+  parentCommitHash?: string | null;
+  previewSelfCheckEnabled?: boolean;
+  designUpdateIntent?: DesignUpdateIntent;
+  designSessionSnapshot?: DesignSession;
+  runId?: string;
   images: string[]; // Array of data URLs
   videos?: string[]; // Array of data URLs
-  selectedElementHtml?: string; // Raw HTML of selected element (for display only)
 }
 
 export interface PromptHistoryMessage {
@@ -77,7 +142,13 @@ export interface CodeGenerationParams {
   generationType: "create" | "update";
   inputMode: "image" | "video" | "text";
   prompt: PromptContent;
+  runId?: string;
+  workspaceId?: string;
+  revisionId?: string;
+  parentCommitHash?: string | null;
+  previewSelfCheckEnabled?: boolean;
   history?: PromptHistoryMessage[];
+  designSession?: DesignSession;
   fileState?: {
     path: string;
     content: string;

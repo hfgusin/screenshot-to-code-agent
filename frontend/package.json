@@ -11,7 +11,9 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "test": "jest",
-    "test:qa": "RUN_E2E=true TEST_ROOT_PATH=src/tests yarn test src/tests/qa.test.ts"
+    "test:qa": "RUN_E2E=true TEST_ROOT_PATH=src/tests yarn test src/tests/qa.test.ts",
+    "qa:agent": "RUN_E2E=true TEST_ROOT_PATH=src/tests AGENT_QA_MODE=mock jest src/tests/agent-qa.test.ts --runInBand",
+    "qa:agent:live": "RUN_E2E=true TEST_ROOT_PATH=src/tests AGENT_QA_MODE=live jest src/tests/agent-qa.test.ts --runInBand"
   },
   "dependencies": {
     "@codemirror/commands": "6.10.3",

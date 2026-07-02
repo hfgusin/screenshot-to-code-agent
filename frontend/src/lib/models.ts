@@ -14,6 +14,7 @@ export enum CodeGenerationModel {
   GPT_5_5_HIGH = "gpt-5.5 (high thinking)",
   GPT_5_5_XHIGH = "gpt-5.5 (xhigh thinking)",
   GPT_5_4_MINI_LOW = "gpt-5.4-mini (low thinking)",
+  DOUBAO_SEED_2_0_MINI_260428 = "doubao-seed-2-0-mini-260428",
   GEMINI_3_FLASH_PREVIEW_HIGH = "gemini-3-flash-preview (high thinking)",
   GEMINI_3_FLASH_PREVIEW_MINIMAL = "gemini-3-flash-preview (minimal thinking)",
   GEMINI_3_1_PRO_PREVIEW_HIGH = "gemini-3.1-pro-preview (high thinking)",
@@ -79,6 +80,9 @@ export const CODE_GENERATION_MODEL_DESCRIPTIONS: {
   },
   "gpt-5.4-mini (low thinking)": {
     name: "GPT 5.4 Mini (low)",
+  },
+  "doubao-seed-2-0-mini-260428": {
+    name: "Doubao Seed 2.0 Mini",
   },
   "claude-opus-4-8 (low effort)": {
     name: "Claude Opus 4.8 (low)",

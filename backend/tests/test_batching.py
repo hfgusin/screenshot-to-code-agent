@@ -10,7 +10,7 @@ from agent.state import AgentFileState
 
 
 @pytest.mark.asyncio
-async def test_process_tasks_batches_replicate_calls(
+async def test_process_tasks_serializes_replicate_calls_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(generation, "REPLICATE_BATCH_SIZE", 3)
@@ -30,6 +30,33 @@ async def test_process_tasks_batches_replicate_calls(
 
     prompts = [f"prompt-{i}" for i in range(7)]
     results = await generation.process_tasks(prompts, "key", None, "flux")
+
+    assert len(results) == 7
+    assert results == [f"url-for-prompt-{i}" for i in range(7)]
+    assert max_concurrent <= 1
+
+
+@pytest.mark.asyncio
+async def test_process_tasks_parallel_batches_replicate_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(generation, "REPLICATE_BATCH_SIZE", 3)
+
+    concurrent = 0
+    max_concurrent = 0
+
+    async def tracking_generate(prompt: str, api_key: str) -> str:
+        nonlocal concurrent, max_concurrent
+        concurrent += 1
+        max_concurrent = max(max_concurrent, concurrent)
+        await asyncio.sleep(0.01)
+        concurrent -= 1
+        return f"url-for-{prompt}"
+
+    monkeypatch.setattr(generation, "generate_image_replicate", tracking_generate)
+
+    prompts = [f"prompt-{i}" for i in range(7)]
+    results = await generation.process_tasks_parallel(prompts, "key", None, "flux")
 
     assert len(results) == 7
     assert results == [f"url-for-prompt-{i}" for i in range(7)]

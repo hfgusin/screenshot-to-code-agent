@@ -1,7 +1,13 @@
 from custom_types import InputMode
 from prompts.create import build_create_prompt_from_input
+from prompts.design_session import build_design_session_prompt_block
 from prompts.plan import derive_prompt_construction_plan
-from prompts.prompt_types import PromptHistoryMessage, Stack, UserTurnInput
+from prompts.prompt_types import (
+    DesignSession,
+    PromptHistoryMessage,
+    Stack,
+    UserTurnInput,
+)
 from prompts.message_builder import Prompt
 from prompts.update import (
     build_update_prompt_from_file_snapshot,
@@ -15,6 +21,7 @@ async def build_prompt_messages(
     generation_type: str,
     prompt: UserTurnInput,
     history: list[PromptHistoryMessage],
+    design_session: DesignSession | None = None,
     file_state: dict[str, str] | None = None,
     image_generation_enabled: bool = True,
     design_system: str | None = None,
@@ -33,6 +40,8 @@ async def build_prompt_messages(
             stack=stack,
             history=history,
             image_generation_enabled=image_generation_enabled,
+            prompt=prompt,
+            design_session=design_session,
             design_system=design_system,
         )
     if strategy == "update_from_file_snapshot":
@@ -42,6 +51,7 @@ async def build_prompt_messages(
             prompt=prompt,
             file_state=file_state,
             image_generation_enabled=image_generation_enabled,
+            design_session=design_session,
             design_system=design_system,
         )
     return build_create_prompt_from_input(
@@ -49,5 +59,6 @@ async def build_prompt_messages(
         stack,
         prompt,
         image_generation_enabled,
-        design_system,
+        design_session=design_session,
+        design_system=design_system,
     )

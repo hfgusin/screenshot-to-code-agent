@@ -2,6 +2,7 @@ import { renderHistory, RenderedHistoryItem } from "./utils";
 import { useProjectStore } from "../../store/project-store";
 import { BsChevronDown, BsChevronRight } from "react-icons/bs";
 import { useState, useRef, useEffect, useCallback } from "react";
+import { toast } from "react-hot-toast";
 
 function MediaThumbnail({
   item,
@@ -108,9 +109,10 @@ function ExpandedMedia({
 }
 
 export default function HistoryDisplay() {
-  const { commits, head, setHead } = useProjectStore();
+  const { commits, head, draftHead, setHead } = useProjectStore();
   const [expandedHash, setExpandedHash] = useState<string | null>(null);
   const [autoPlayHash, setAutoPlayHash] = useState<string | null>(null);
+  const isDraftInProgress = draftHead !== null && draftHead !== head;
 
   // Clear auto-play flag when the expanded item changes
   useEffect(() => {
@@ -123,6 +125,14 @@ export default function HistoryDisplay() {
     setExpandedHash(hash);
     setAutoPlayHash(hash);
   }, []);
+
+  const handleRollback = useCallback(
+    (hash: string, versionNumber: number) => {
+      setHead(hash);
+      toast.success(`Rolled back working base to version ${versionNumber}.`);
+    },
+    [setHead]
+  );
 
   // Put all commits into an array and sort by created date (oldest first)
   const flatHistory = Object.values(commits).sort(
@@ -137,6 +147,11 @@ export default function HistoryDisplay() {
 
   return (
     <div className="flex flex-col gap-2">
+      {isDraftInProgress && (
+        <div className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900 dark:border-violet-900/50 dark:bg-violet-950/20 dark:text-violet-100">
+          New draft is updating separately. The versions below are frozen history.
+        </div>
+      )}
       {[...renderedHistory].reverse().map((item, _reverseIndex) => {
         const versionNumber = renderedHistory.length - _reverseIndex;
         const isActive = item.hash === head;
@@ -155,6 +170,7 @@ export default function HistoryDisplay() {
             <div
               className="flex items-center gap-3 px-3 py-2.5 cursor-pointer"
               onClick={() => setHead(item.hash)}
+              data-testid={`history-item-version-${versionNumber}`}
             >
               {/* Version number badge */}
               <span
@@ -243,6 +259,25 @@ export default function HistoryDisplay() {
                     Target: <code className="font-mono text-[10px] bg-violet-100 dark:bg-violet-900/30 px-1 py-0.5 rounded">&lt;{item.selectedElementTag}&gt;</code>
                   </p>
                 )}
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleRollback(item.hash, versionNumber);
+                    }}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                      isActive
+                        ? "bg-gray-100 text-gray-500 dark:bg-zinc-800 dark:text-zinc-400"
+                        : "bg-violet-600 text-white hover:bg-violet-700 dark:bg-violet-500 dark:hover:bg-violet-400"
+                    }`}
+                    disabled={isActive || isDraftInProgress}
+                    data-testid={`rollback-version-${versionNumber}`}
+                    title="Restore this version as the current working base"
+                  >
+                    {isActive ? "Current base" : "Rollback here"}
+                  </button>
+                </div>
                 <ExpandedMedia
                   item={item}
                   autoPlayVideo={autoPlayHash === item.hash}

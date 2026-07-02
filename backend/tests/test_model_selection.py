@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock
 from routes.generate_code import ModelSelectionStage
-from llm import Llm
+from llm import Llm, OPENAI_MODELS
 
 
 class TestModelSelectionAllKeys:
@@ -14,7 +14,7 @@ class TestModelSelectionAllKeys:
 
     @pytest.mark.asyncio
     async def test_gemini_anthropic_create(self):
-        """All keys text create: fixed order for four variants."""
+        """All keys text create: OpenAI-compatible keys are preferred."""
         models = await self.model_selector.select_models(
             generation_type="create",
             input_mode="text",
@@ -23,17 +23,12 @@ class TestModelSelectionAllKeys:
             gemini_api_key="key",
         )
 
-        expected = [
-            Llm.GEMINI_3_FLASH_PREVIEW_MINIMAL,
-            Llm.GPT_5_5_HIGH,
-            Llm.CLAUDE_OPUS_4_6,
-            Llm.GEMINI_3_1_PRO_PREVIEW_LOW,
-        ]
+        expected = [Llm.DOUBAO_SEED_2_0_MINI_260428]
         assert models == expected
 
     @pytest.mark.asyncio
     async def test_gemini_anthropic_create_image(self):
-        """All keys image create: fixed order for four variants."""
+        """All keys image create: OpenAI-compatible keys are preferred."""
         models = await self.model_selector.select_models(
             generation_type="create",
             input_mode="image",
@@ -42,17 +37,12 @@ class TestModelSelectionAllKeys:
             gemini_api_key="key",
         )
 
-        expected = [
-            Llm.CLAUDE_OPUS_4_8_MEDIUM,
-            Llm.GPT_5_5_LOW,
-            Llm.GEMINI_3_FLASH_PREVIEW_HIGH,
-            Llm.GEMINI_3_1_PRO_PREVIEW_HIGH,
-        ]
+        expected = [Llm.DOUBAO_SEED_2_0_MINI_260428]
         assert models == expected
 
     @pytest.mark.asyncio
     async def test_gemini_anthropic_update_text(self):
-        """All keys text update: uses two fast edit variants."""
+        """All keys text update: OpenAI-compatible keys are preferred."""
         models = await self.model_selector.select_models(
             generation_type="update",
             input_mode="text",
@@ -61,15 +51,12 @@ class TestModelSelectionAllKeys:
             gemini_api_key="key",
         )
 
-        expected = [
-            Llm.GEMINI_3_FLASH_PREVIEW_MINIMAL,
-            Llm.GPT_5_4_MINI_LOW,
-        ]
+        expected = [Llm.DOUBAO_SEED_2_0_MINI_260428]
         assert models == expected
 
     @pytest.mark.asyncio
     async def test_gemini_anthropic_update(self):
-        """All keys image update: uses two fast edit variants."""
+        """All keys image update: OpenAI-compatible keys are preferred."""
         models = await self.model_selector.select_models(
             generation_type="update",
             input_mode="image",
@@ -78,10 +65,7 @@ class TestModelSelectionAllKeys:
             gemini_api_key="key",
         )
 
-        expected = [
-            Llm.GEMINI_3_FLASH_PREVIEW_MINIMAL,
-            Llm.GPT_5_4_MINI_LOW,
-        ]
+        expected = [Llm.DOUBAO_SEED_2_0_MINI_260428]
         assert models == expected
 
     @pytest.mark.asyncio
@@ -103,7 +87,7 @@ class TestModelSelectionAllKeys:
 
     @pytest.mark.asyncio
     async def test_video_update_prefers_gemini_minimal_then_3_1_high(self):
-        """Video update always uses the same two Gemini variants as video create."""
+        """Video update still uses the same two Gemini variants as video create."""
         models = await self.model_selector.select_models(
             generation_type="update",
             input_mode="video",
@@ -129,7 +113,7 @@ class TestModelSelectionOpenAIAnthropic:
 
     @pytest.mark.asyncio
     async def test_openai_anthropic(self):
-        """OpenAI + Anthropic: Claude Opus 4.6, GPT 5.5 high, GPT 5.5 low, cycling"""
+        """OpenAI + Anthropic prefers the OpenAI-compatible default."""
         models = await self.model_selector.select_models(
             generation_type="create",
             input_mode="text",
@@ -138,12 +122,7 @@ class TestModelSelectionOpenAIAnthropic:
             gemini_api_key=None,
         )
 
-        expected = [
-            Llm.CLAUDE_OPUS_4_6,
-            Llm.GPT_5_5_HIGH,
-            Llm.GPT_5_5_LOW,
-            Llm.CLAUDE_OPUS_4_6,
-        ]
+        expected = [Llm.DOUBAO_SEED_2_0_MINI_260428]
         assert models == expected
 
 
@@ -157,7 +136,7 @@ class TestModelSelectionAnthropicOnly:
 
     @pytest.mark.asyncio
     async def test_anthropic_only(self):
-        """Anthropic only: Claude Opus 4.6 and Claude Sonnet 4.6 cycling"""
+        """Anthropic only: the single default create variant uses the first model."""
         models = await self.model_selector.select_models(
             generation_type="create",
             input_mode="text",
@@ -166,12 +145,7 @@ class TestModelSelectionAnthropicOnly:
             gemini_api_key=None,
         )
 
-        expected = [
-            Llm.CLAUDE_OPUS_4_6,
-            Llm.CLAUDE_SONNET_4_6,
-            Llm.CLAUDE_OPUS_4_6,
-            Llm.CLAUDE_SONNET_4_6,
-        ]
+        expected = [Llm.CLAUDE_OPUS_4_6]
         assert models == expected
 
 
@@ -185,7 +159,7 @@ class TestModelSelectionOpenAIOnly:
 
     @pytest.mark.asyncio
     async def test_openai_only(self):
-        """OpenAI only: GPT 5.5 high and low, cycling"""
+        """OpenAI only: the single default create variant uses the first model."""
         models = await self.model_selector.select_models(
             generation_type="create",
             input_mode="text",
@@ -194,12 +168,7 @@ class TestModelSelectionOpenAIOnly:
             gemini_api_key=None,
         )
 
-        expected = [
-            Llm.GPT_5_5_HIGH,
-            Llm.GPT_5_5_LOW,
-            Llm.GPT_5_5_HIGH,
-            Llm.GPT_5_5_LOW,
-        ]
+        expected = [Llm.DOUBAO_SEED_2_0_MINI_260428]
         assert models == expected
 
 
@@ -222,3 +191,7 @@ class TestModelSelectionNoKeys:
                 anthropic_api_key=None,
                 gemini_api_key=None,
             )
+
+
+def test_doubao_is_registered_as_openai_compatible() -> None:
+    assert Llm.DOUBAO_SEED_2_0_MINI_260428 in OPENAI_MODELS

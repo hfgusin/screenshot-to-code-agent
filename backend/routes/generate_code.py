@@ -1,7 +1,9 @@
 import asyncio
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
+import time
 import traceback
+from difflib import SequenceMatcher
 from typing import Callable, Awaitable
 from fastapi import APIRouter, WebSocket
 import openai
@@ -45,14 +47,19 @@ MessageType = Literal[
     "variantError",
     "variantCount",
     "variantModels",
+    "variantMetrics",
     "thinking",
     "assistant",
     "toolStart",
     "toolResult",
 ]
 from prompts.pipeline import build_prompt_messages
-from prompts.request_parsing import parse_prompt_content, parse_prompt_history
-from prompts.prompt_types import PromptHistoryMessage, Stack, UserTurnInput
+from prompts.request_parsing import (
+    parse_design_session,
+    parse_prompt_content,
+    parse_prompt_history,
+)
+from prompts.prompt_types import DesignSession, PromptHistoryMessage, Stack, UserTurnInput
 from uploaded_assets import (
     append_uploaded_asset_ids_to_history,
     append_uploaded_asset_ids_to_prompt,
@@ -60,14 +67,9 @@ from uploaded_assets import (
 )
 from agent.runner import Agent
 from routes.model_choice_sets import (
-    ALL_KEYS_MODELS_DEFAULT,
-    ALL_KEYS_MODELS_TEXT_CREATE,
-    ALL_KEYS_MODELS_UPDATE,
     ANTHROPIC_ONLY_MODELS,
     GEMINI_ANTHROPIC_MODELS,
-    GEMINI_OPENAI_MODELS,
     GEMINI_ONLY_MODELS,
-    OPENAI_ANTHROPIC_MODELS,
     OPENAI_ONLY_MODELS,
     VIDEO_VARIANT_MODELS,
 )
@@ -239,8 +241,13 @@ class ExtractedParams:
     generation_type: Literal["create", "update"]
     prompt: UserTurnInput
     history: List[PromptHistoryMessage]
-    file_state: Dict[str, str] | None
-    option_codes: List[str]
+    design_session: DesignSession = field(
+        default_factory=lambda: cast(DesignSession, {})
+    )
+    run_id: str | None = None
+    workspace_id: str | None = None
+    file_state: Dict[str, str] | None = None
+    option_codes: List[str] = field(default_factory=list)
     asset_base_url: str = ""
     design_system: str | None = None
 
@@ -313,6 +320,7 @@ class ParameterExtractionStage:
         history: List[PromptHistoryMessage] = parse_prompt_history(
             params.get("history")
         )
+        design_session = parse_design_session(params.get("designSession"))
 
         prompt = append_uploaded_asset_ids_to_prompt(prompt, self.asset_base_url)
         history = append_uploaded_asset_ids_to_history(history, self.asset_base_url)
@@ -355,6 +363,9 @@ class ParameterExtractionStage:
             generation_type=generation_type,
             prompt=prompt,
             history=history,
+            design_session=design_session,
+            run_id=prompt.get("run_id"),
+            workspace_id=prompt.get("workspace_id"),
             file_state=file_state,
             option_codes=option_codes,
             asset_base_url=self.asset_base_url,
@@ -393,7 +404,13 @@ class ModelSelectionStage:
     ) -> List[Llm]:
         """Select appropriate models based on available API keys"""
         try:
-            num_variants = 2 if generation_type == "update" else NUM_VARIANTS
+            num_variants = NUM_VARIANTS
+            print("\033[31m", generation_type,
+                input_mode,
+                num_variants,
+                openai_api_key,
+                anthropic_api_key,
+                gemini_api_key)
             variant_models = self._get_variant_models(
                 generation_type,
                 input_mode,
@@ -430,6 +447,7 @@ class ModelSelectionStage:
 
         # Video mode requires Gemini - 2 variants for comparison
         if input_mode == "video":
+            print('进入分支 video')
             if not gemini_api_key:
                 raise Exception(
                     "Video mode requires a Gemini API key. "
@@ -438,33 +456,21 @@ class ModelSelectionStage:
             return list(VIDEO_VARIANT_MODELS)
 
         # Define models based on available API keys
-        if gemini_api_key and anthropic_api_key and openai_api_key:
-            if input_mode == "text" and generation_type == "create":
-                models = list(ALL_KEYS_MODELS_TEXT_CREATE)
-            elif generation_type == "update":
-                models = list(ALL_KEYS_MODELS_UPDATE)
-            else:
-                models = list(ALL_KEYS_MODELS_DEFAULT)
+        if openai_api_key:
+            models = list(OPENAI_ONLY_MODELS)
         elif gemini_api_key and anthropic_api_key:
             models = list(GEMINI_ANTHROPIC_MODELS)
-        elif gemini_api_key and openai_api_key:
-            models = list(GEMINI_OPENAI_MODELS)
-        elif openai_api_key and anthropic_api_key:
-            models = list(OPENAI_ANTHROPIC_MODELS)
         elif gemini_api_key:
             models = list(GEMINI_ONLY_MODELS)
         elif anthropic_api_key:
             models = list(ANTHROPIC_ONLY_MODELS)
-        elif openai_api_key:
-            models = list(OPENAI_ONLY_MODELS)
         else:
             raise Exception("No OpenAI or Anthropic key")
 
-        # Cycle through models: [A, B] with num=5 becomes [A, B, A, B, A]
-        selected_models: List[Llm] = []
-        for i in range(num_variants):
-            selected_models.append(models[i % len(models)])
-
+        # Single-agent default: keep one active model for non-video flows.
+        selected_models: List[Llm] = [models[0]]
+        print('总结： ', num_variants)
+        print('selected_models: ', selected_models)
         return selected_models
 
 
@@ -486,6 +492,7 @@ class PromptCreationStage:
                 generation_type=extracted_params.generation_type,
                 prompt=extracted_params.prompt,
                 history=extracted_params.history,
+                design_session=extracted_params.design_session,
                 file_state=extracted_params.file_state,
                 image_generation_enabled=extracted_params.should_generate_images,
                 design_system=extracted_params.design_system,
@@ -526,9 +533,12 @@ class AgenticGenerationStage:
         anthropic_api_key: str | None,
         gemini_api_key: str | None,
         should_generate_images: bool,
+        generation_type: Literal["create", "update"],
         file_state: Dict[str, str] | None,
         asset_base_url: str,
         option_codes: List[str] | None,
+        request_parse_ms: int = 0,
+        prompt_build_ms: int = 0,
     ):
         self.send_message = send_message
         self.openai_api_key = openai_api_key
@@ -536,9 +546,44 @@ class AgenticGenerationStage:
         self.anthropic_api_key = anthropic_api_key
         self.gemini_api_key = gemini_api_key
         self.should_generate_images = should_generate_images
+        self.generation_type = generation_type
         self.file_state = file_state
         self.asset_base_url = asset_base_url
         self.option_codes = option_codes or []
+        self.request_parse_ms = request_parse_ms
+        self.prompt_build_ms = prompt_build_ms
+
+    @staticmethod
+    def _normalize_code(code: str) -> str:
+        return "".join(code.split())
+
+    @classmethod
+    def _is_visibly_different(cls, candidate: str, baseline: str) -> bool:
+        normalized_candidate = cls._normalize_code(candidate)
+        normalized_baseline = cls._normalize_code(baseline)
+        if not normalized_candidate or not normalized_baseline:
+            return True
+        if normalized_candidate == normalized_baseline:
+            return False
+        similarity = SequenceMatcher(
+            None, normalized_candidate, normalized_baseline
+        ).ratio()
+        return similarity < 0.98
+
+    @staticmethod
+    def _classify_error_message(error: Exception) -> str:
+        message = str(error).lower()
+        if isinstance(error, asyncio.TimeoutError) or "timeout" in message:
+            return "timeout"
+        if "unsupported model" in message or "model" in message:
+            return "model_selection"
+        if "image" in message:
+            return "image_generation"
+        if "workspace" in message:
+            return "workspace_restore"
+        if "tool" in message:
+            return "tool_runtime"
+        return "generation"
 
     async def process_variants(
         self,
@@ -570,6 +615,7 @@ class AgenticGenerationStage:
         model: Llm,
         prompt_messages: List[ChatCompletionMessageParam],
     ) -> str:
+        started_at = time.perf_counter()
         try:
             async def send_runner_message(
                 type: str,
@@ -599,8 +645,70 @@ class AgenticGenerationStage:
                 option_codes=self.option_codes,
             )
             completion = await runner.run(model, prompt_messages)
+            if (
+                self.generation_type == "update"
+                and self.file_state
+                and self.file_state.get("content")
+                and completion
+                and not self._is_visibly_different(
+                    completion, self.file_state["content"]
+                )
+            ):
+                retry_prompt_messages = list(prompt_messages) + [
+                    {
+                        "role": "user",
+                        "content": (
+                            "The previous attempt was too similar to the current draft. "
+                            "Produce a visibly different revision. Change the layout "
+                            "hierarchy, section composition, spacing rhythm, or visual "
+                            "emphasis while preserving the requested direction. "
+                            "Do not return a near-identical layout."
+                        ),
+                    }
+                ]
+                retry_runner = Agent(
+                    send_message=send_runner_message,
+                    variant_index=index,
+                    openai_api_key=self.openai_api_key,
+                    openai_base_url=self.openai_base_url,
+                    anthropic_api_key=self.anthropic_api_key,
+                    gemini_api_key=self.gemini_api_key,
+                    should_generate_images=self.should_generate_images,
+                    asset_base_url=self.asset_base_url,
+                    initial_file_state=self.file_state,
+                    option_codes=self.option_codes,
+                )
+                retry_completion = await retry_runner.run(model, retry_prompt_messages)
+                if retry_completion and self._is_visibly_different(
+                    retry_completion, self.file_state["content"]
+                ):
+                    completion = retry_completion
             if completion:
                 await self.send_message("setCode", completion, index, None, None)
+            duration_ms = round((time.perf_counter() - started_at) * 1000)
+            stage_timings = {
+                "requestParseMs": self.request_parse_ms,
+                "promptBuildMs": self.prompt_build_ms,
+                "modelGenerationMs": duration_ms,
+                "toolRuntimeMs": runner.run_metrics.get("toolRuntimeMs", 0),
+                "imageGenerationMs": runner.run_metrics.get("imageGenerationMs", 0),
+                "previewSelfCheckMs": runner.run_metrics.get("previewSelfCheckMs", 0),
+            }
+            latest_image_update = runner.run_metrics.get("latestImageUpdate")
+            await self.send_message(
+                "variantMetrics",
+                None,
+                index,
+                {
+                    "stageTimings": stage_timings,
+                    "imageUpdateStatus": latest_image_update,
+                    "failureStage": None,
+                },
+                None,
+            )
+            print(
+                f"[VARIANT {index + 1}] completed model={model.value} duration_ms={duration_ms}"
+            )
             await self.send_message(
                 "variantComplete",
                 "Variant generation complete",
@@ -620,6 +728,22 @@ class AgenticGenerationStage:
                     else ""
                 )
             )
+            await self.send_message(
+                "variantMetrics",
+                None,
+                index,
+                {
+                    "stageTimings": {
+                        "requestParseMs": self.request_parse_ms,
+                        "promptBuildMs": self.prompt_build_ms,
+                        "modelGenerationMs": round(
+                            (time.perf_counter() - started_at) * 1000
+                        ),
+                    },
+                    "failureStage": "model_selection",
+                },
+                None,
+            )
             await self.send_message("variantError", error_message, index, None, None)
             return ""
         except openai.NotFoundError as e:
@@ -635,6 +759,22 @@ class AgenticGenerationStage:
                     else ""
                 )
             )
+            await self.send_message(
+                "variantMetrics",
+                None,
+                index,
+                {
+                    "stageTimings": {
+                        "requestParseMs": self.request_parse_ms,
+                        "promptBuildMs": self.prompt_build_ms,
+                        "modelGenerationMs": round(
+                            (time.perf_counter() - started_at) * 1000
+                        ),
+                    },
+                    "failureStage": "model_selection",
+                },
+                None,
+            )
             await self.send_message("variantError", error_message, index, None, None)
             return ""
         except openai.RateLimitError as e:
@@ -647,12 +787,51 @@ class AgenticGenerationStage:
                     else ""
                 )
             )
+            await self.send_message(
+                "variantMetrics",
+                None,
+                index,
+                {
+                    "stageTimings": {
+                        "requestParseMs": self.request_parse_ms,
+                        "promptBuildMs": self.prompt_build_ms,
+                        "modelGenerationMs": round(
+                            (time.perf_counter() - started_at) * 1000
+                        ),
+                    },
+                    "failureStage": "generation",
+                },
+                None,
+            )
             await self.send_message("variantError", error_message, index, None, None)
             return ""
         except Exception as e:
             print(f"Error in variant {index + 1}: {e}")
             traceback.print_exception(type(e), e, e.__traceback__)
-            await self.send_message("variantError", str(e), index, None, None)
+            stage = self._classify_error_message(e)
+            await self.send_message(
+                "variantMetrics",
+                None,
+                index,
+                {
+                    "stageTimings": {
+                        "requestParseMs": self.request_parse_ms,
+                        "promptBuildMs": self.prompt_build_ms,
+                        "modelGenerationMs": round(
+                            (time.perf_counter() - started_at) * 1000
+                        ),
+                    },
+                    "failureStage": stage,
+                },
+                None,
+            )
+            await self.send_message(
+                "variantError",
+                f"[{stage}] {str(e)}",
+                index,
+                None,
+                None,
+            )
             return ""
 
 
@@ -682,6 +861,7 @@ class ParameterExtractionMiddleware(Middleware):
     async def process(
         self, context: PipelineContext, next_func: Callable[[], Awaitable[None]]
     ) -> None:
+        parse_started_at = time.perf_counter()
         # Receive parameters
         assert context.ws_comm is not None
         context.params = await context.ws_comm.receive_params()
@@ -694,10 +874,18 @@ class ParameterExtractionMiddleware(Middleware):
         context.extracted_params = await param_extractor.extract_and_validate(
             context.params
         )
+        context.metadata["request_parse_ms"] = round(
+            (time.perf_counter() - parse_started_at) * 1000
+        )
 
         # Log what we're generating
         print(
-            f"Generating {context.extracted_params.stack} code in {context.extracted_params.input_mode} mode"
+            "Generating "
+            f"{context.extracted_params.stack} code in {context.extracted_params.input_mode} mode "
+            f"(workspace={context.extracted_params.workspace_id or 'n/a'}, "
+            f"run={context.extracted_params.run_id or 'n/a'}, "
+            f"revision={context.extracted_params.prompt.get('revision_id') or 'n/a'}, "
+            f"parent={context.extracted_params.prompt.get('parent_commit_hash') or 'n/a'})"
         )
 
         await next_func()
@@ -709,14 +897,12 @@ class StatusBroadcastMiddleware(Middleware):
     async def process(
         self, context: PipelineContext, next_func: Callable[[], Awaitable[None]]
     ) -> None:
-        # Determine variant count based on input mode and generation type.
-        # Edit/update flows use two variants to keep latency and cost down.
+        # Determine variant count based on input mode.
+        # Non-video flows default to a single main draft; video keeps two
+        # variants for comparison.
         assert context.extracted_params is not None
         is_video_mode = context.extracted_params.input_mode == "video"
-        is_update = context.extracted_params.generation_type == "update"
-        num_variants = (
-            NUM_VARIANTS_VIDEO if is_video_mode else 2 if is_update else NUM_VARIANTS
-        )
+        num_variants = NUM_VARIANTS_VIDEO if is_video_mode else 1
 
         # Tell frontend how many variants we're using
         await context.send_message("variantCount", str(num_variants), 0)
@@ -733,10 +919,14 @@ class PromptCreationMiddleware(Middleware):
     async def process(
         self, context: PipelineContext, next_func: Callable[[], Awaitable[None]]
     ) -> None:
+        context.metadata["prompt_started_at"] = time.perf_counter()
         prompt_creator = PromptCreationStage(context.throw_error)
         assert context.extracted_params is not None
         context.prompt_messages = await prompt_creator.build_prompt_messages(
             context.extracted_params,
+        )
+        context.metadata["prompt_duration_ms"] = round(
+            (time.perf_counter() - context.metadata["prompt_started_at"]) * 1000
         )
         await next_func()
 
@@ -749,9 +939,19 @@ class CodeGenerationMiddleware(Middleware):
     ) -> None:
         try:
             assert context.extracted_params is not None
+            generation_started_at = time.perf_counter()
 
             # Select models (handles video mode internally)
             model_selector = ModelSelectionStage(context.throw_error)
+            print(
+                "[GENERATE_CODE] trace="
+                f"run={context.extracted_params.run_id or 'n/a'} "
+                f"workspace={context.extracted_params.workspace_id or 'n/a'} "
+                f"revision={context.extracted_params.prompt.get('revision_id') or 'n/a'} "
+                f"parent={context.extracted_params.prompt.get('parent_commit_hash') or 'n/a'} "
+                f"stack={context.extracted_params.stack} "
+                f"input_mode={context.extracted_params.input_mode}"
+            )
             context.variant_models = await model_selector.select_models(
                 generation_type=context.extracted_params.generation_type,
                 input_mode=context.extracted_params.input_mode,
@@ -775,14 +975,25 @@ class CodeGenerationMiddleware(Middleware):
                 anthropic_api_key=context.extracted_params.anthropic_api_key,
                 gemini_api_key=context.extracted_params.gemini_api_key,
                 should_generate_images=context.extracted_params.should_generate_images,
+                generation_type=context.extracted_params.generation_type,
                 file_state=context.extracted_params.file_state,
                 asset_base_url=context.extracted_params.asset_base_url,
                 option_codes=context.extracted_params.option_codes,
+                request_parse_ms=int(context.metadata.get("request_parse_ms", 0)),
+                prompt_build_ms=int(context.metadata.get("prompt_duration_ms", 0)),
             )
 
             context.variant_completions = await generation_stage.process_variants(
                 variant_models=context.variant_models,
                 prompt_messages=context.prompt_messages,
+            )
+            total_duration_ms = round((time.perf_counter() - generation_started_at) * 1000)
+            print(
+                "[GENERATE_CODE] completed "
+                f"workspace={context.extracted_params.workspace_id or 'n/a'} "
+                f"revision={context.extracted_params.prompt.get('revision_id') or 'n/a'} "
+                f"prompt_ms={context.metadata.get('prompt_duration_ms', 'n/a')} "
+                f"generation_ms={total_duration_ms}"
             )
 
             # Check if all variants failed

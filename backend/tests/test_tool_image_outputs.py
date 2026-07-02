@@ -180,15 +180,40 @@ async def test_gemini_inlines_local_bytes_and_fetches_public_url(
 @pytest.mark.asyncio
 async def test_generate_images_emits_url_parts(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.setattr("agent.tools.runtime.REPLICATE_API_KEY", "fake-key")
+    asset_dir = tmp_path / "local-assets"
+    monkeypatch.setattr("agent.tools.local_assets.LOCAL_ASSET_DIR", str(asset_dir))
+    monkeypatch.setattr("uploaded_assets.store.LOCAL_ASSET_DIR", str(asset_dir))
 
     async def fake_process_tasks(
         prompts: List[str], api_key: str, base_url: Any, model: str
     ) -> List[str]:
-        return [f"https://replicate.delivery/{p}.png" for p in prompts]
+        return [
+            "https://ark-content-generation-v2-cn-beijing.tos-cn-beijing.volces.com/doubao-seedream-4-0/signed.jpeg?X-Tos-Signature=abc"
+            for _ in prompts
+        ]
+
+    class _Saved:
+        def __init__(self, public_url: str) -> None:
+            self.public_url = public_url
+            self.content_type = "image/jpeg"
+
+    async def fake_persist_remote_image_url_as_asset(
+        image_url: str, asset_base_url: str, user_id: str | None = None
+    ) -> _Saved:
+        assert image_url.startswith("https://ark-content-generation-v2-cn-beijing.tos-cn-beijing.volces.com/")
+        path = asset_dir / "asset_test.jpg"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"persisted-remote-image")
+        return _Saved("http://127.0.0.1:7001/local-assets/asset_test.jpg")
 
     monkeypatch.setattr("agent.tools.runtime.process_tasks", fake_process_tasks)
+    monkeypatch.setattr(
+        "agent.tools.runtime.persist_remote_image_url_as_asset",
+        fake_persist_remote_image_url_as_asset,
+    )
     runtime = AgentToolRuntime(
         file_state=AgentFileState(),
         should_generate_images=True,
@@ -199,8 +224,18 @@ async def test_generate_images_emits_url_parts(
         ToolCall(id="t", name="generate_images", arguments={"prompts": ["a logo"]})
     )
     assert result.multimodal_parts is not None
-    assert result.multimodal_parts[0].image_url == "https://replicate.delivery/a logo.png"
-    assert result.multimodal_parts[0].data is None
+    assert result.result["imageMap"]["a logo"] == "http://127.0.0.1:7001/local-assets/asset_test.jpg"
+    assert result.result["images"][0]["persistedAssetUrl"] == "http://127.0.0.1:7001/local-assets/asset_test.jpg"
+    assert result.multimodal_parts[0].image_url is None
+    assert result.multimodal_parts[0].data == b"persisted-remote-image"
+    assert result.metadata == {
+        "image_update": {
+            "operation": "create",
+            "status": "ok",
+            "persistedAssetUrl": "http://127.0.0.1:7001/local-assets/asset_test.jpg",
+            "assetId": "tmp_asset_test",
+        }
+    }
 
 
 @pytest.mark.asyncio
@@ -210,7 +245,22 @@ async def test_edit_image_emits_url_part(monkeypatch: pytest.MonkeyPatch) -> Non
     async def fake_edit_image(**kwargs: Any) -> str:
         return "https://replicate.delivery/edited.png"
 
+    class _Saved:
+        asset_id = "tmp_asset_edited"
+        public_url = "http://127.0.0.1:7001/local-assets/edited.png"
+        content_type = "image/png"
+
+    async def fake_persist_remote_image_url_as_asset(
+        image_url: str, asset_base_url: str, user_id: str | None = None
+    ) -> _Saved:
+        assert image_url == "https://replicate.delivery/edited.png"
+        return _Saved()
+
     monkeypatch.setattr("agent.tools.runtime.edit_image", fake_edit_image)
+    monkeypatch.setattr(
+        "agent.tools.runtime.persist_remote_image_url_as_asset",
+        fake_persist_remote_image_url_as_asset,
+    )
     runtime = AgentToolRuntime(
         file_state=AgentFileState(),
         should_generate_images=True,
@@ -226,6 +276,17 @@ async def test_edit_image_emits_url_part(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     assert result.multimodal_parts is not None
     assert result.multimodal_parts[0].image_url == "https://replicate.delivery/edited.png"
+    assert result.result["image"]["persistedAssetUrl"] == "http://127.0.0.1:7001/local-assets/edited.png"
+    assert result.metadata == {
+        "image_update": {
+            "operation": "edit",
+            "status": "ok",
+            "sourceImageUrl": "https://x/in.png",
+            "persistedAssetUrl": "http://127.0.0.1:7001/local-assets/edited.png",
+            "assetId": "tmp_asset_edited",
+            "parentAssetId": None,
+        }
+    }
 
 
 @pytest.mark.asyncio

@@ -26,8 +26,9 @@ def create_provider_session(
 ) -> ProviderSession:
     canonical_tools = canonical_tool_definitions(
         image_generation_enabled=should_generate_images,
-        # The edit_image tool calls Replicate, so don't offer it without a key.
-        image_editing_enabled=bool(REPLICATE_API_KEY),
+        # Offer image editing when either Replicate is available or the
+        # OpenAI-compatible provider can accept image-to-image style requests.
+        image_editing_enabled=bool(REPLICATE_API_KEY or openai_api_key),
         # The extract_assets tool calls Gemini, so don't offer it without a key.
         asset_extraction_enabled=bool(gemini_api_key),
         # screenshot_preview needs headless Chromium; skip it if it can't launch.

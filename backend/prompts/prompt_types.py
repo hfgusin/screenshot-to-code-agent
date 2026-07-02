@@ -13,6 +13,14 @@ class UserTurnInput(_UserTurnInputRequired, total=False):
     # Full instruction for the model when it differs from the display text
     # (e.g. includes the selected-element reference, built by the frontend).
     full_text: str
+    workspace_id: str
+    selected_element_html: str
+    selected_element_context: str
+    revision_id: str
+    run_id: str
+    parent_commit_hash: str
+    preview_self_check_enabled: bool
+    design_update_intent: "DesignUpdateIntent"
 
 
 class PromptHistoryMessage(TypedDict):
@@ -22,6 +30,24 @@ class PromptHistoryMessage(TypedDict):
     text: str
     images: List[str]
     videos: List[str]
+
+
+class DesignSession(TypedDict, total=False):
+    """Persistent design intent carried across turns."""
+
+    goal: str
+    constraints: str
+    style: str
+    references: str
+    revision_log: List[str]
+
+
+class DesignUpdateIntent(TypedDict):
+    target: str
+    intent: str
+    placement: str
+    alignment: str
+    preserve: List[str]
 
 
 PromptConstructionStrategy = Literal[

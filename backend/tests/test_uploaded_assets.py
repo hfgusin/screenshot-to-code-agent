@@ -7,6 +7,7 @@ from uploaded_assets import (
     append_uploaded_asset_ids_to_prompt,
     persist_data_url_as_asset,
     persist_data_url_as_temporary_asset,
+    persist_remote_image_url_as_asset,
     promote_temporary_asset_id,
 )
 
@@ -14,6 +15,30 @@ from uploaded_assets import (
 def _data_url(payload: bytes, content_type: str = "image/png") -> str:
     encoded = base64.b64encode(payload).decode("ascii")
     return f"data:{content_type};base64,{encoded}"
+
+
+class _RemoteResponse:
+    def __init__(self, payload: bytes, content_type: str = "image/jpeg") -> None:
+        self.content = payload
+        self.headers = {"content-type": content_type}
+
+    def raise_for_status(self) -> None:
+        return None
+
+
+class _RemoteClient:
+    def __init__(self, *args, **kwargs) -> None:
+        self.requests: list[str] = []
+
+    async def __aenter__(self) -> "_RemoteClient":
+        return self
+
+    async def __aexit__(self, *args) -> bool:
+        return False
+
+    async def get(self, url: str) -> _RemoteResponse:
+        self.requests.append(url)
+        return _RemoteResponse(b"remote-image-bytes")
 
 
 def test_persist_data_url_as_temporary_asset_writes_tmp_file_and_returns_asset_id(
@@ -97,6 +122,25 @@ async def test_persist_data_url_as_asset_finalizes_without_temp_staging(
 @pytest.mark.asyncio
 async def test_persist_data_url_as_asset_rejects_non_image() -> None:
     assert await persist_data_url_as_asset("not-a-data-url", "http://127.0.0.1:7001") is None
+
+
+@pytest.mark.asyncio
+async def test_persist_remote_image_url_as_asset_downloads_and_serves(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    asset_dir = tmp_path / "local-assets"
+    monkeypatch.setattr("uploaded_assets.store.LOCAL_ASSET_DIR", str(asset_dir))
+    monkeypatch.setattr("uploaded_assets.store.httpx.AsyncClient", _RemoteClient)
+
+    saved = await persist_remote_image_url_as_asset(
+        "https://ark-content-generation-v2-cn-beijing.tos-cn-beijing.volces.com/doubao-seedream-4-0/signed.jpeg?X-Tos-Signature=abc",
+        "http://127.0.0.1:7001",
+    )
+
+    assert saved is not None
+    assert saved.public_url.startswith("http://127.0.0.1:7001/local-assets/asset_")
+    assert (asset_dir / Path(saved.public_url).name).exists()
 
 
 def test_append_uploaded_asset_ids_to_prompt_keeps_image_and_adds_id(

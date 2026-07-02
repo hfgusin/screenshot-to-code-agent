@@ -86,6 +86,8 @@ def _extract_text_from_content(content: str | List[Dict[str, Any]]) -> str:
         return content
 
     for content_part in content:
+        if not isinstance(content_part, dict):
+            continue
         if content_part.get("type") == "text":
             return content_part.get("text", "")
 
@@ -121,6 +123,8 @@ def _extract_images_from_content(content: str | List[Dict[str, Any]]) -> List[Di
 
     images: List[Dict[str, str]] = []
     for content_part in content:
+        if not isinstance(content_part, dict):
+            continue
         if content_part.get("type") != "image_url":
             continue
 
@@ -149,13 +153,14 @@ def _convert_message_to_gemini_content(
     message: ChatCompletionMessageParam,
 ) -> types.Content:
     role = message.get("role", "user")
-    content = message.get("content", "")
+    raw_content = message.get("content", "")
+    content = raw_content if isinstance(raw_content, str) or isinstance(raw_content, list) else ""
     gemini_role = "model" if role == "assistant" else "user"
 
     parts: List[types.Part | Dict[str, str]] = []
 
-    text = _extract_text_from_content(content)  # type: ignore
-    image_data_list = _extract_images_from_content(content)  # type: ignore
+    text = _extract_text_from_content(content)
+    image_data_list = _extract_images_from_content(content)
 
     if text:
         parts.append({"text": text})
@@ -186,7 +191,7 @@ def _convert_message_to_gemini_content(
         if "uri" in image_data:
             parts.append({"file_uri": image_data["uri"]})
 
-    return types.Content(role=gemini_role, parts=parts)  # type: ignore
+    return types.Content(role=gemini_role, parts=parts)
 
 
 @dataclass

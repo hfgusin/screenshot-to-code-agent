@@ -49,6 +49,7 @@ class ToolExecutionResult:
     summary: Dict[str, Any]
     updated_content: Optional[str] = None
     multimodal_parts: Optional[List[ToolMultimodalPart]] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)

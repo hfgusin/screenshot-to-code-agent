@@ -46,6 +46,21 @@ def test_edit_file_returns_structured_result_with_diff() -> None:
     assert result.summary["diff"] == result.result["details"]["diff"]
 
 
+def test_create_file_rejects_plain_text_summary() -> None:
+    runtime = AgentToolRuntime(
+        file_state=AgentFileState(path="index.html"),
+        should_generate_images=False,
+        openai_api_key=None,
+        openai_base_url=None,
+    )
+
+    result = runtime._create_file({"content": "已创建一个日系风页面，整体清爽高级。"})
+
+    assert result.ok is False
+    assert "full HTML document" in result.result["error"]
+    assert runtime.file_state.content == ""
+
+
 @pytest.mark.asyncio
 async def test_execute_edit_file_uses_updated_result_shape() -> None:
     runtime = AgentToolRuntime(

@@ -3,6 +3,7 @@ import {
   AgentEvent,
   Commit,
   CommitHash,
+  Variant,
   VariantHistoryMessage,
   VariantStatus,
 } from "../components/commits/types";
@@ -24,6 +25,7 @@ interface ProjectStore {
   // Outputs
   commits: Record<string, Commit>;
   head: CommitHash | null;
+  draftHead: CommitHash | null;
   latestCommitHash: CommitHash | null;
 
   addCommit: (commit: Commit) => void;
@@ -55,6 +57,11 @@ interface ProjectStore {
   ) => void;
   resizeVariants: (hash: CommitHash, count: number) => void;
   setVariantModels: (hash: CommitHash, models: string[]) => void;
+  patchVariant: (
+    hash: CommitHash,
+    numVariant: number,
+    patch: Partial<Variant>
+  ) => void;
 
   startAgentEvent: (
     hash: CommitHash,
@@ -76,6 +83,8 @@ interface ProjectStore {
 
   setHead: (hash: CommitHash) => void;
   resetHead: () => void;
+  setDraftHead: (hash: CommitHash | null) => void;
+  resetDraftHead: () => void;
 
   executionConsoles: { [key: number]: string[] };
   appendExecutionConsole: (variantIndex: number, line: string) => void;
@@ -105,6 +114,7 @@ export const useProjectStore = create<ProjectStore>((set) => ({
   // Outputs
   commits: {},
   head: null,
+  draftHead: null,
   latestCommitHash: null,
 
   addCommit: (commit: Commit) => {
@@ -356,6 +366,35 @@ export const useProjectStore = create<ProjectStore>((set) => ({
         },
       };
     }),
+  patchVariant: (hash, numVariant, patch) =>
+    set((state) => {
+      const commit = state.commits[hash];
+      if (!commit) return state;
+      return {
+        commits: {
+          ...state.commits,
+          [hash]: {
+            ...commit,
+            variants: commit.variants.map((variant, index) =>
+              index === numVariant
+                ? {
+                    ...variant,
+                    ...patch,
+                    diagnostics: {
+                      ...variant.diagnostics,
+                      ...patch.diagnostics,
+                    },
+                    metrics: {
+                      ...variant.metrics,
+                      ...patch.metrics,
+                    },
+                  }
+                : variant
+            ),
+          },
+        },
+      };
+    }),
 
   startAgentEvent: (hash, numVariant, event) =>
     set((state) => {
@@ -442,6 +481,8 @@ export const useProjectStore = create<ProjectStore>((set) => ({
 
   setHead: (hash: CommitHash) => set({ head: hash }),
   resetHead: () => set({ head: null }),
+  setDraftHead: (hash: CommitHash | null) => set({ draftHead: hash }),
+  resetDraftHead: () => set({ draftHead: null }),
 
   executionConsoles: {},
   appendExecutionConsole: (variantIndex: number, line: string) =>

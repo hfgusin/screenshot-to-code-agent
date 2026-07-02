@@ -1,6 +1,6 @@
 import { useAppStore } from "../../store/app-store";
 import { useProjectStore } from "../../store/project-store";
-import { AppState } from "../../types";
+import { AppState, DesignSession } from "../../types";
 import { Button } from "../ui/button";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { LuMousePointerClick, LuRefreshCw, LuArrowUp, LuX } from "react-icons/lu";
@@ -9,6 +9,8 @@ import { toast } from "react-hot-toast";
 import Variants from "../variants/Variants";
 import UpdateImageUpload, { UpdateImagePreview } from "../UpdateImageUpload";
 import AgentActivity from "../agent/AgentActivity";
+import AgentMaturityPanel from "../agent/AgentMaturityPanel";
+import AgentRegressionPanel from "../agent/AgentRegressionPanel";
 import WorkingPulse from "../core/WorkingPulse";
 import ImageLightbox from "../ImageLightbox";
 import { Commit } from "../commits/types";
@@ -16,13 +18,21 @@ import { CodeGenerationModel } from "../../lib/models";
 import DesignSystemSelector, {
   DesignSystemSelectorProps,
 } from "../settings/DesignSystemSelector";
+import DesignSessionPanel from "../design-session/DesignSessionPanel";
+import RecentWorkspacesPanel from "../workspace/RecentWorkspacesPanel";
+import { WorkspaceSummary } from "../../lib/workspace-storage";
 
 interface SidebarProps {
   doUpdate: (instruction: string) => void;
   regenerate: () => void;
   cancelCodeGeneration: () => void;
   onOpenVersions: () => void;
+  designSession: DesignSession;
+  setDesignSession: React.Dispatch<React.SetStateAction<DesignSession>>;
   designSystem: DesignSystemSelectorProps;
+  workspaceId: string;
+  recentWorkspaces: WorkspaceSummary[];
+  onOpenWorkspace: (id: string) => Promise<boolean>;
 }
 
 const MAX_UPDATE_IMAGES = 5;
@@ -71,7 +81,12 @@ function Sidebar({
   regenerate,
   cancelCodeGeneration,
   onOpenVersions,
+  designSession,
+  setDesignSession,
   designSystem,
+  workspaceId,
+  recentWorkspaces,
+  onOpenWorkspace,
 }: SidebarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const middlePaneRef = useRef<HTMLDivElement>(null);
@@ -145,9 +160,11 @@ function Sidebar({
     [updateImages, setUpdateImages]
   );
 
-  const { head, commits, latestCommitHash, setHead } = useProjectStore();
+  const { head, draftHead, commits, latestCommitHash, setHead } =
+    useProjectStore();
 
-  const currentCommit = head ? commits[head] : null;
+  const activeCommitHash = draftHead ?? head;
+  const currentCommit = activeCommitHash ? commits[activeCommitHash] : null;
   const latestChangeSummary = summarizeLatestChange(currentCommit);
   const selectedElementTag = getSelectedElementTag(currentCommit);
   const latestChangeImages =
@@ -158,13 +175,19 @@ function Sidebar({
     currentCommit && currentCommit.type !== "code_create"
       ? currentCommit.inputs.videos ?? []
       : [];
+  const latestUpdateIntent =
+    currentCommit && currentCommit.type !== "code_create"
+      ? currentCommit.inputs.designUpdateIntent
+      : undefined;
   const selectedVariantIndex = currentCommit?.selectedVariantIndex ?? 0;
   const selectedVariant = currentCommit?.variants[selectedVariantIndex];
   const selectedVariantEvents = selectedVariant?.agentEvents ?? [];
+  const selectedVariantDiagnostics = selectedVariant?.diagnostics;
+  const selectedVariantMetrics = selectedVariant?.metrics;
   const showWorkingIndicator =
     appState === AppState.CODING &&
     selectedVariantEvents.length === 0 &&
-    head === latestCommitHash;
+    activeCommitHash === latestCommitHash;
   const requestStartMs =
     selectedVariant?.requestStartedAt ??
     (currentCommit?.dateCreated
@@ -175,37 +198,39 @@ function Sidebar({
     : undefined;
 
   const isFirstGeneration = currentCommit?.type === "ai_create";
-  const isViewingOlderVersion = head !== null && head !== latestCommitHash;
+  const isViewingOlderVersion =
+    activeCommitHash !== null && activeCommitHash !== latestCommitHash;
+  const isDraftInProgress = draftHead !== null && draftHead !== head;
 
-  // Compute version number for the current head
+  // Compute version number for the active commit being previewed
   const currentVersionNumber = (() => {
-    if (!head) return null;
+    if (!activeCommitHash) return null;
     const sorted = Object.values(commits).sort(
       (a, b) => new Date(a.dateCreated).getTime() - new Date(b.dateCreated).getTime()
     );
-    const index = sorted.findIndex((c) => c.hash === head);
+    const index = sorted.findIndex((c) => c.hash === activeCommitHash);
     return index !== -1 ? index + 1 : null;
   })();
 
   // Check if the currently selected variant is complete
   const isSelectedVariantComplete =
-    head &&
-    commits[head] &&
-    commits[head].variants[commits[head].selectedVariantIndex].status ===
+    activeCommitHash &&
+    commits[activeCommitHash] &&
+    commits[activeCommitHash].variants[commits[activeCommitHash].selectedVariantIndex].status ===
       "complete";
 
   // Check if the currently selected variant has an error
   const isSelectedVariantError =
-    head &&
-    commits[head] &&
-    commits[head].variants[commits[head].selectedVariantIndex].status ===
+    activeCommitHash &&
+    commits[activeCommitHash] &&
+    commits[activeCommitHash].variants[commits[activeCommitHash].selectedVariantIndex].status ===
       "error";
 
   // Get the error message from the selected variant
   const selectedVariantErrorMessage =
-    head &&
-    commits[head] &&
-    commits[head].variants[commits[head].selectedVariantIndex].errorMessage;
+    activeCommitHash &&
+    commits[activeCommitHash] &&
+    commits[activeCommitHash].variants[commits[activeCommitHash].selectedVariantIndex].errorMessage;
 
   // Auto-resize textarea to fit content
   const autoResize = useCallback(() => {
@@ -243,12 +268,12 @@ function Sidebar({
   // Reset error expanded state when variant changes
   useEffect(() => {
     setIsErrorExpanded(false);
-  }, [head, selectedVariantIndex]);
+  }, [activeCommitHash, selectedVariantIndex]);
 
   // Reset prompt expanded state when commit changes and detect clamping
   useEffect(() => {
     setIsPromptExpanded(false);
-  }, [head]);
+  }, [activeCommitHash]);
 
   useEffect(() => {
     const el = promptTextRef.current;
@@ -265,7 +290,7 @@ function Sidebar({
       if (!middlePaneRef.current) return;
       middlePaneRef.current.scrollTop = middlePaneRef.current.scrollHeight;
     });
-  }, [head, selectedVariantIndex]);
+  }, [activeCommitHash, selectedVariantIndex]);
 
   useEffect(() => {
     if (appState !== AppState.CODING) return;
@@ -279,6 +304,12 @@ function Sidebar({
       <div className="shrink-0 border-b border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-4 py-2">
         <Variants />
       </div>
+
+      {isDraftInProgress && (
+        <div className="border-b border-violet-200/70 bg-violet-50/70 px-4 py-2 text-xs text-violet-900 dark:border-violet-900/50 dark:bg-violet-950/20 dark:text-violet-100">
+          <span className="font-semibold">Draft in progress.</span> Historical versions are frozen while the new draft updates.
+        </div>
+      )}
 
       {/* Scrollable content */}
       <div
@@ -363,9 +394,91 @@ function Sidebar({
           </div>
         )}
 
+        {latestUpdateIntent && currentCommit?.type === "ai_edit" && (
+          <div className="mb-3 rounded-xl border border-violet-200/80 bg-violet-50/60 px-3 py-3 text-xs dark:border-violet-900/50 dark:bg-violet-950/20">
+            <div className="mb-1 font-semibold uppercase tracking-[0.18em] text-violet-700 dark:text-violet-300">
+              Structured edit target
+            </div>
+            <div className="space-y-1 text-violet-900 dark:text-violet-100">
+              <div>Target: {latestUpdateIntent.target}</div>
+              <div>Intent: {latestUpdateIntent.intent}</div>
+              <div>Placement: {latestUpdateIntent.placement}</div>
+              <div>Alignment: {latestUpdateIntent.alignment}</div>
+            </div>
+          </div>
+        )}
+
+        {(selectedVariantDiagnostics || selectedVariantMetrics?.durationMs) && (
+          <div className="mb-3 rounded-xl border border-gray-200 bg-white px-3 py-3 text-xs dark:border-zinc-800 dark:bg-zinc-900">
+            <div className="mb-1 font-semibold uppercase tracking-[0.18em] text-gray-500 dark:text-zinc-400">
+              Agent diagnostics
+            </div>
+            <div className="space-y-1 text-gray-700 dark:text-zinc-300">
+              {selectedVariantMetrics?.durationMs !== undefined && (
+                <div>Duration: {(selectedVariantMetrics.durationMs / 1000).toFixed(1)}s</div>
+              )}
+              {(selectedVariantDiagnostics?.failureStage ||
+                selectedVariantDiagnostics?.stage) && (
+                <div>
+                  Failure stage:{" "}
+                  {selectedVariantDiagnostics?.failureStage ||
+                    selectedVariantDiagnostics?.stage}
+                </div>
+              )}
+              {selectedVariantDiagnostics?.selfCheckStatus && (
+                <div>Preview self-check: {selectedVariantDiagnostics.selfCheckStatus}</div>
+              )}
+              {selectedVariantDiagnostics?.targeting && (
+                <div>
+                  Target hit: {Math.round(selectedVariantDiagnostics.targeting.score * 100)}%
+                  {" · "}
+                  {selectedVariantDiagnostics.targeting.intentMatched ? "intent matched" : "intent weak"}
+                  {" · "}
+                  {selectedVariantDiagnostics.targeting.collateralDamage ? "outside changed" : "outside preserved"}
+                </div>
+              )}
+              {selectedVariantDiagnostics?.imageUpdateStatus && (
+                <div>
+                  Image update: {selectedVariantDiagnostics.imageUpdateStatus.operation}
+                  {" · "}
+                  {selectedVariantDiagnostics.imageUpdateStatus.status}
+                </div>
+              )}
+              {selectedVariantMetrics?.stageTimings && (
+                <div className="rounded-lg bg-gray-50 px-2 py-2 text-[11px] text-gray-500 dark:bg-zinc-800/60 dark:text-zinc-400">
+                  parse {((selectedVariantMetrics.stageTimings.requestParseMs ?? 0) / 1000).toFixed(1)}s
+                  {" · "}prompt {((selectedVariantMetrics.stageTimings.promptBuildMs ?? 0) / 1000).toFixed(1)}s
+                  {" · "}model {((selectedVariantMetrics.stageTimings.modelGenerationMs ?? 0) / 1000).toFixed(1)}s
+                  {" · "}tools {((selectedVariantMetrics.stageTimings.toolRuntimeMs ?? 0) / 1000).toFixed(1)}s
+                  {" · "}image {((selectedVariantMetrics.stageTimings.imageGenerationMs ?? 0) / 1000).toFixed(1)}s
+                </div>
+              )}
+              {selectedVariantDiagnostics?.selfCheckSummary && (
+                <div>{selectedVariantDiagnostics.selfCheckSummary}</div>
+              )}
+              {selectedVariantDiagnostics?.selfCheckIssues &&
+                selectedVariantDiagnostics.selfCheckIssues.length > 0 && (
+                  <ul className="list-disc pl-4 text-gray-500 dark:text-zinc-400">
+                    {selectedVariantDiagnostics.selfCheckIssues.map((issue) => (
+                      <li key={issue}>{issue}</li>
+                    ))}
+                  </ul>
+                )}
+              {selectedVariantDiagnostics?.targeting?.changedSignals &&
+                selectedVariantDiagnostics.targeting.changedSignals.length > 0 && (
+                  <ul className="list-disc pl-4 text-gray-500 dark:text-zinc-400">
+                    {selectedVariantDiagnostics.targeting.changedSignals.map((signal) => (
+                      <li key={signal}>{signal}</li>
+                    ))}
+                  </ul>
+                )}
+            </div>
+          </div>
+        )}
+
         {currentCommit?.type === "ai_create" &&
           appState === AppState.CODING &&
-          head === latestCommitHash &&
+          activeCommitHash === latestCommitHash &&
           !isSelectedVariantComplete &&
           !isSelectedVariantError &&
           isSlowGeminiModel(selectedVariant?.model) && (
@@ -401,6 +514,32 @@ function Sidebar({
           <AgentActivity />
         )}
 
+        <div className="mb-4">
+          <AgentMaturityPanel />
+        </div>
+
+        <div className="mb-4">
+          <DesignSessionPanel
+            designSession={designSession}
+            setDesignSession={setDesignSession}
+            compact
+          />
+        </div>
+
+        <div className="mb-4">
+          <RecentWorkspacesPanel
+            workspaces={recentWorkspaces}
+            activeWorkspaceId={workspaceId}
+            onOpenWorkspace={(id) => {
+              void onOpenWorkspace(id);
+            }}
+          />
+        </div>
+
+        <div className="mb-4">
+          <AgentRegressionPanel />
+        </div>
+
         {/* Regenerate button for first generation.
             Scenarios:
             1) `appState === CODE_READY`: request fully ended and user can retry.
@@ -409,7 +548,7 @@ function Sidebar({
             3) `isSelectedVariantError`: selected option failed; keep retry visible so
                users can rerun create without losing uploaded inputs. */}
         {isFirstGeneration &&
-          head === latestCommitHash &&
+          activeCommitHash === latestCommitHash &&
           (appState === AppState.CODE_READY ||
             isSelectedVariantComplete ||
             isSelectedVariantError) && (

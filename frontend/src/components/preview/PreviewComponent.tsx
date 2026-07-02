@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import classNames from "classnames";
 import useThrottle from "../../hooks/useThrottle";
 import { useAppStore } from "../../store/app-store";
 import { normalizeBabelCdn } from "../../lib/babelCdn";
+import { isRenderableHtmlDocument } from "../../lib/design-agent";
 import {
   applySelectModeCursor,
   hideHoverOverlay,
@@ -13,12 +14,14 @@ import {
   showHoverOverlay,
   showSelectionOverlay,
 } from "../select-and-edit/overlays";
+import { resolveEditableTarget } from "../select-and-edit/utils";
 
 interface Props {
   code: string;
   device: "mobile" | "desktop";
   onScaleChange?: (scale: number) => void;
   viewMode?: "fit" | "actual";
+  isGenerating?: boolean;
 }
 
 const MOBILE_VIEWPORT_WIDTH = 375;
@@ -29,16 +32,30 @@ function PreviewComponent({
   device,
   onScaleChange,
   viewMode,
+  isGenerating = false,
 }: Props) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const lastRenderableCodeRef = useRef("");
 
   // Don't update code more often than every 200ms.
   const throttledCode = useThrottle(code, 200);
+  const normalizedCode = useMemo(
+    () => normalizeBabelCdn(throttledCode),
+    [throttledCode]
+  );
+  const hasRenderableCode = isRenderableHtmlDocument(normalizedCode);
+  const hasEverRenderedCode = lastRenderableCodeRef.current.trim().length > 0;
 
   // Select and edit functionality
   const [clickEvent, setClickEvent] = useState<MouseEvent | null>(null);
   const activeMode = viewMode ?? "fit";
+
+  useEffect(() => {
+    if (hasRenderableCode) {
+      lastRenderableCodeRef.current = normalizedCode;
+    }
+  }, [hasRenderableCode, normalizedCode]);
 
   // In select-and-edit mode, intercept clicks in the capture phase so the
   // generated app's own handlers (React/Vue listeners, Bootstrap/Ionic
@@ -129,7 +146,7 @@ function PreviewComponent({
     const targetElement = clickEvent.target as HTMLElement;
     if (!targetElement) return;
 
-    setSelectedElement(targetElement);
+    setSelectedElement(resolveEditableTarget(targetElement));
   }, [clickEvent, setSelectedElement]);
 
   // Render the selection ring for whatever element is currently selected
@@ -271,12 +288,85 @@ function PreviewComponent({
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe) return;
-    // Normalize the Babel CDN so generated React pages (old and new) mount.
-    const html = normalizeBabelCdn(throttledCode);
+  const fallbackHtml = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: linear-gradient(180deg, #fafafa 0%, #f3f4f6 100%);
+        color: #111827;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 32px;
+      }
+      .shell {
+        width: min(560px, 100%);
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.82);
+        box-shadow: 0 24px 80px rgba(15, 23, 42, 0.08);
+        padding: 28px;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #6366f1;
+        margin-bottom: 16px;
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        box-shadow: 0 0 0 6px rgba(99, 102, 241, 0.12);
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 28px;
+        line-height: 1.1;
+        letter-spacing: -0.04em;
+      }
+      p {
+        margin: 0;
+        font-size: 15px;
+        line-height: 1.7;
+        color: #4b5563;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="badge"><span class="dot"></span>Preview pending</div>
+      <h1>${isGenerating ? "Generating preview…" : "No renderable preview yet"}</h1>
+      <p>${isGenerating ? "We are keeping the last stable screen visible while the next draft lands." : "The agent has not produced renderable code yet, so this shell prevents a blank canvas."}</p>
+    </div>
+  </body>
+</html>`;
+    const html = hasRenderableCode
+      ? normalizedCode
+      : hasEverRenderedCode
+        ? lastRenderableCodeRef.current
+        : fallbackHtml;
     if (iframe.srcdoc !== html) {
       iframe.srcdoc = html;
     }
-  }, [throttledCode]);
+  }, [hasEverRenderedCode, hasRenderableCode, isGenerating, normalizedCode]);
 
   return (
     <div
@@ -291,20 +381,27 @@ function PreviewComponent({
       <div
         ref={wrapperRef}
         className={`w-full h-full ${device === "mobile" ? "flex justify-center" : ""}`}
-      >
-        <iframe
-          id={`preview-${device}`}
-          ref={iframeRef}
-          title="Preview"
-          className={classNames(
-            {
-              "border-0": true,
-            }
+        >
+          <iframe
+            id={`preview-${device}`}
+            ref={iframeRef}
+            title="Preview"
+            className={classNames(
+              {
+                "border-0": true,
+              }
+            )}
+          ></iframe>
+          {isGenerating && !hasRenderableCode && (
+            <div className="absolute inset-0 pointer-events-none flex items-center justify-center bg-white/75 dark:bg-zinc-950/70 backdrop-blur-sm">
+              <div className="rounded-2xl border border-dashed border-violet-300 bg-white px-5 py-3 text-sm font-medium text-violet-700 shadow-sm dark:border-violet-800 dark:bg-zinc-900 dark:text-violet-300">
+                Waiting for renderable code…
+              </div>
+            </div>
           )}
-        ></iframe>
+        </div>
       </div>
-    </div>
-  );
+    );
 }
 
 export default PreviewComponent;

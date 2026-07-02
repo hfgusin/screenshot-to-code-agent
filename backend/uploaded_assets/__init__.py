@@ -9,6 +9,7 @@ from uploaded_assets.store import (
     infer_local_asset_base_url,
     persist_data_url_as_asset,
     persist_data_url_as_temporary_asset,
+    persist_remote_image_url_as_asset,
     promote_temporary_asset_id,
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     "infer_local_asset_base_url",
     "persist_data_url_as_asset",
     "persist_data_url_as_temporary_asset",
+    "persist_remote_image_url_as_asset",
     "promote_temporary_asset_id",
 ]

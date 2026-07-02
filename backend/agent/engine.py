@@ -12,11 +12,14 @@ from agent.providers.factory import create_provider_session
 from agent.state import AgentFileState, seed_file_state_from_messages
 from agent.tools import (
     AgentToolRuntime,
+    ToolCall,
     extract_content_from_args,
     extract_path_from_args,
     summarize_text,
     summarize_tool_input,
 )
+from codegen.utils import is_renderable_html_document
+from preview_screenshot import is_screenshot_preview_available
 
 
 class AgentEngine:
@@ -58,7 +61,15 @@ class AgentEngine:
             asset_base_url=asset_base_url,
             option_codes=option_codes,
         )
+        self._screenshot_preview_available = is_screenshot_preview_available()
         self._tool_preview_lengths: Dict[str, int] = {}
+        self.run_metrics: Dict[str, Any] = {
+            "toolRuntimeMs": 0,
+            "imageGenerationMs": 0,
+            "previewSelfCheckMs": 0,
+            "toolCalls": 0,
+            "latestImageUpdate": None,
+        }
 
     @staticmethod
     def _extract_input_images(
@@ -70,12 +81,16 @@ class AgentEngine:
             if not isinstance(content, list):
                 continue
             for part in content:
-                if not isinstance(part, dict) or part.get("type") != "image_url":
+                if not isinstance(part, dict):
                     continue
-                image_url = part.get("image_url")
+                typed_part = cast(Dict[str, Any], part)
+                if typed_part.get("type") != "image_url":
+                    continue
+                image_url = typed_part.get("image_url")
                 if not isinstance(image_url, dict):
                     continue
-                url = cast(object, image_url.get("url"))
+                typed_image_url = cast(Dict[str, Any], image_url)
+                url = typed_image_url.get("url")
                 if isinstance(url, str) and url:
                     images.append(url)
         return images
@@ -102,6 +117,8 @@ class AgentEngine:
     async def _stream_code_preview(self, tool_event_id: Optional[str], content: str) -> None:
         if not tool_event_id or not content:
             return
+        if not is_renderable_html_document(content):
+            return
 
         already_sent = self._tool_preview_lengths.get(tool_event_id, 0)
         total_len = len(content)
@@ -120,6 +137,35 @@ class AgentEngine:
 
         await self._send("setCode", content)
         self._mark_preview_length(tool_event_id, total_len)
+
+    async def _run_self_check_preview(self) -> ExecutedToolCall | None:
+        if not self._screenshot_preview_available:
+            return None
+
+        tool_call = ToolCall(
+            id=self._next_event_id("tool"),
+            name="screenshot_preview",
+            arguments={},
+        )
+        await self._send(
+            "toolStart",
+            data={
+                "name": "screenshot_preview",
+                "input": {},
+            },
+            event_id=tool_call.id,
+        )
+        result = await self.tool_runtime.execute(tool_call)
+        await self._send(
+            "toolResult",
+            data={
+                "name": tool_call.name,
+                "output": result.summary,
+                "ok": result.ok,
+            },
+            event_id=tool_call.id,
+        )
+        return ExecutedToolCall(tool_call=tool_call, result=result)
 
     async def _handle_streamed_tool_delta(
         self,
@@ -210,6 +256,7 @@ class AgentEngine:
                 return await self._finalize_response(turn.assistant_text)
 
             executed_tool_calls: List[ExecutedToolCall] = []
+            file_changed_this_turn = False
             for tool_call in turn.tool_calls:
                 tool_event_id = tool_call.id or self._next_event_id("tool")
                 if tool_event_id not in started_tool_ids:
@@ -224,10 +271,12 @@ class AgentEngine:
 
                 if tool_call.name == "create_file":
                     content = extract_content_from_args(tool_call.arguments)
-                    if content:
+                    if content and is_renderable_html_document(content):
                         await self._stream_code_preview(tool_event_id, content)
 
                 tool_result = await self.tool_runtime.execute(tool_call)
+                if tool_call.name in {"create_file", "edit_file"} and tool_result.ok:
+                    file_changed_this_turn = True
                 if tool_result.updated_content:
                     await self._send("setCode", tool_result.updated_content)
 
@@ -244,7 +293,13 @@ class AgentEngine:
                     ExecutedToolCall(tool_call=tool_call, result=tool_result)
                 )
 
+            if file_changed_this_turn:
+                self_check = await self._run_self_check_preview()
+                if self_check is not None:
+                    executed_tool_calls.append(self_check)
+
             await session.append_tool_results(turn, executed_tool_calls)
+            self.run_metrics.update(self.tool_runtime.snapshot_metrics())
 
         raise Exception("Agent exceeded max tool turns")
 
@@ -264,6 +319,7 @@ class AgentEngine:
         try:
             return await self._run_with_session(session)
         finally:
+            self.run_metrics.update(self.tool_runtime.snapshot_metrics())
             await session.close()
 
     async def _finalize_response(self, assistant_text: str) -> str:
@@ -271,7 +327,7 @@ class AgentEngine:
             return self.file_state.content
 
         html = extract_html_content(assistant_text)
-        if html:
+        if is_renderable_html_document(html):
             self.file_state.content = html
             await self._send("setCode", html)
 

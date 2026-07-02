@@ -20,9 +20,10 @@ function getLastSentence(text: string): string {
 function ThinkingIndicator() {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const { head, commits, latestCommitHash } = useProjectStore();
+  const { head, draftHead, commits, latestCommitHash } = useProjectStore();
 
-  const currentCommit = head ? commits[head] : null;
+  const activeCommitHash = draftHead ?? head;
+  const currentCommit = activeCommitHash ? commits[activeCommitHash] : null;
   const selectedVariant = currentCommit
     ? currentCommit.variants[currentCommit.selectedVariantIndex]
     : null;
@@ -42,7 +43,7 @@ function ThinkingIndicator() {
   const isThinkingComplete = thinking.length > 0 && code.length > 0;
 
   // Only show thinking for the latest commit, not historical ones
-  const isLatestCommit = head === latestCommitHash;
+  const isLatestCommit = activeCommitHash === latestCommitHash;
 
   // Don't render if there's no thinking content and we're not in the waiting state
   if (!thinking && !isWaiting) {

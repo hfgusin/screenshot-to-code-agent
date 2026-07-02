@@ -1,20 +1,31 @@
 # pyright: reportUnknownVariableType=false
 import asyncio
 import difflib
+import time
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
-from codegen.utils import extract_html_content
+from codegen.utils import (
+    contains_html_markup,
+    extract_html_content,
+    is_renderable_html_document,
+)
 from config import REPLICATE_API_KEY
 from agent.tools.extract_assets import run_extract_assets
-from agent.tools.local_assets import guess_image_mime, local_asset_url_to_data_url
+from agent.tools.local_assets import (
+    guess_image_mime,
+    local_asset_url_to_data_url,
+    local_asset_url_to_bytes,
+)
 from agent.tools.screenshot_preview import run_screenshot_preview
 from image_generation.generation import process_tasks
+from image_generation.generation import generate_image_openai
 from image_generation.replicate import (
     P_IMAGE_EDIT_ASPECT_RATIOS,
     PImageEditAspectRatio,
     edit_image,
     remove_background,
 )
+from uploaded_assets import persist_remote_image_url_as_asset
 from uploaded_assets.tools import run_save_assets
 
 from agent.state import AgentFileState, ensure_str
@@ -44,11 +55,19 @@ class AgentToolRuntime:
         self.asset_base_url = asset_base_url
         self.user_id = user_id
         self.option_codes = option_codes or []
+        self.metrics: Dict[str, Any] = {
+            "toolRuntimeMs": 0,
+            "imageGenerationMs": 0,
+            "previewSelfCheckMs": 0,
+            "toolCalls": 0,
+        }
+        self.image_updates: List[Dict[str, Any]] = []
 
     async def execute(self, tool_call: ToolCall) -> ToolExecutionResult:
+        started_at = time.perf_counter()
         if "INVALID_JSON" in tool_call.arguments:
             invalid_json = ensure_str(tool_call.arguments.get("INVALID_JSON"))
-            return ToolExecutionResult(
+            result = ToolExecutionResult(
                 ok=False,
                 result={
                     "error": "Tool arguments were invalid JSON.",
@@ -56,39 +75,117 @@ class AgentToolRuntime:
                 },
                 summary={"error": "Invalid JSON tool arguments"},
             )
+            self._record_tool_metrics(tool_call.name, started_at, result)
+            return result
 
         if tool_call.name == "create_file":
-            return self._create_file(tool_call.arguments)
+            result = self._create_file(tool_call.arguments)
+            self._record_tool_metrics(tool_call.name, started_at, result)
+            return result
         if tool_call.name == "edit_file":
-            return self._edit_file(tool_call.arguments)
+            result = self._edit_file(tool_call.arguments)
+            self._record_tool_metrics(tool_call.name, started_at, result)
+            return result
         if tool_call.name == "generate_images":
-            return await self._generate_images(tool_call.arguments)
+            result = await self._generate_images(tool_call.arguments)
+            self._record_tool_metrics(tool_call.name, started_at, result)
+            return result
         if tool_call.name == "remove_background":
-            return await self._remove_background(tool_call.arguments)
+            result = await self._remove_background(tool_call.arguments)
+            self._record_tool_metrics(tool_call.name, started_at, result)
+            return result
         if tool_call.name == "edit_image":
-            return await self._edit_image(tool_call.arguments)
+            result = await self._edit_image(tool_call.arguments)
+            self._record_tool_metrics(tool_call.name, started_at, result)
+            return result
         if tool_call.name == "extract_assets":
-            return await run_extract_assets(
+            result = await run_extract_assets(
                 tool_call.arguments,
                 gemini_api_key=self.gemini_api_key,
                 input_images=self.input_images,
                 asset_base_url=self.asset_base_url,
                 user_id=self.user_id,
             )
+            self._record_tool_metrics(tool_call.name, started_at, result)
+            return result
         if tool_call.name == "screenshot_preview":
-            return await run_screenshot_preview(
+            result = await run_screenshot_preview(
                 tool_call.arguments,
                 file_state=self.file_state,
             )
+            self._record_tool_metrics(tool_call.name, started_at, result)
+            return result
         if tool_call.name == "save_assets":
-            return await run_save_assets(tool_call.arguments, user_id=self.user_id)
+            result = await run_save_assets(tool_call.arguments, user_id=self.user_id)
+            self._record_tool_metrics(tool_call.name, started_at, result)
+            return result
         if tool_call.name == "retrieve_option":
-            return self._retrieve_option(tool_call.arguments)
-        return ToolExecutionResult(
+            result = self._retrieve_option(tool_call.arguments)
+            self._record_tool_metrics(tool_call.name, started_at, result)
+            return result
+        result = ToolExecutionResult(
             ok=False,
             result={"error": f"Unknown tool: {tool_call.name}"},
             summary={"error": f"Unknown tool: {tool_call.name}"},
         )
+        self._record_tool_metrics(tool_call.name, started_at, result)
+        return result
+
+    def _record_tool_metrics(
+        self,
+        tool_name: str,
+        started_at: float,
+        result: ToolExecutionResult,
+    ) -> None:
+        elapsed_ms = round((time.perf_counter() - started_at) * 1000)
+        self.metrics["toolRuntimeMs"] = int(self.metrics["toolRuntimeMs"]) + elapsed_ms
+        self.metrics["toolCalls"] = int(self.metrics["toolCalls"]) + 1
+        if tool_name == "generate_images":
+            self.metrics["imageGenerationMs"] = (
+                int(self.metrics["imageGenerationMs"]) + elapsed_ms
+            )
+        if tool_name == "edit_image":
+            self.metrics["imageGenerationMs"] = (
+                int(self.metrics["imageGenerationMs"]) + elapsed_ms
+            )
+        if tool_name == "screenshot_preview":
+            self.metrics["previewSelfCheckMs"] = (
+                int(self.metrics["previewSelfCheckMs"]) + elapsed_ms
+            )
+
+        metadata = result.metadata or {}
+        image_update = metadata.get("image_update")
+        if isinstance(image_update, dict):
+            self.image_updates.append(image_update)
+
+    def snapshot_metrics(self) -> Dict[str, Any]:
+        latest_image_update = self.image_updates[-1] if self.image_updates else None
+        return {
+            "toolRuntimeMs": int(self.metrics["toolRuntimeMs"]),
+            "imageGenerationMs": int(self.metrics["imageGenerationMs"]),
+            "previewSelfCheckMs": int(self.metrics["previewSelfCheckMs"]),
+            "toolCalls": int(self.metrics["toolCalls"]),
+            "latestImageUpdate": latest_image_update,
+        }
+
+    @staticmethod
+    def _resolve_saved_asset_id(saved_asset: Any, public_url: str | None) -> str | None:
+        explicit_asset_id = getattr(saved_asset, "asset_id", None)
+        if isinstance(explicit_asset_id, str) and explicit_asset_id.strip():
+            return explicit_asset_id
+
+        if not public_url:
+            return None
+
+        filename = public_url.rsplit("/", 1)[-1].split("?", 1)[0]
+        stem, _sep, _suffix = filename.partition(".")
+        if not stem:
+            return None
+
+        if stem.startswith("asset_"):
+            return stem.replace("asset_", "tmp_asset_", 1)
+
+        return f"tmp_{stem}"
 
     def _create_file(self, args: Dict[str, Any]) -> ToolExecutionResult:
         path = ensure_str(args.get("path") or self.file_state.path or "index.html")
@@ -101,6 +198,22 @@ class AgentToolRuntime:
             )
 
         extracted = extract_html_content(content)
+        if not is_renderable_html_document(extracted):
+            return ToolExecutionResult(
+                ok=False,
+                result={
+                    "error": (
+                        "create_file requires a full HTML document. "
+                        "Do not return a prose summary or plain text."
+                    ),
+                    "preview": summarize_text(content, 240),
+                },
+                summary={
+                    "error": "Non-renderable create_file content",
+                    "preview": summarize_text(content, 240),
+                },
+            )
+
         self.file_state.path = path
         self.file_state.content = extracted or content
 
@@ -224,7 +337,23 @@ class AgentToolRuntime:
                 }
             )
 
-        self.file_state.content = content
+        next_content = content
+        if not contains_html_markup(next_content):
+            return ToolExecutionResult(
+                ok=False,
+                result={
+                    "error": (
+                        "edit_file must preserve HTML markup. "
+                        "Do not replace the file with plain text."
+                    ),
+                    "preview": summarize_text(next_content, 240),
+                },
+                summary={
+                    "error": "Non-markup edit_file content",
+                    "preview": summarize_text(next_content, 240),
+                },
+            )
+        self.file_state.content = next_content
         path = self.file_state.path or "index.html"
         diff_info = self._generate_diff(original_content, content, path)
         summary = {
@@ -288,33 +417,104 @@ class AgentToolRuntime:
             base_url = self.openai_base_url
 
         generated = await process_tasks(unique_prompts, api_key, base_url, model)  # type: ignore
-        merged_results = {
-            prompt: url for prompt, url in zip(unique_prompts, generated)
-        }
-        summary_items = [
-            {
+        merged_results: Dict[str, Dict[str, Any]] = {}
+        multimodal_parts: List[ToolMultimodalPart] = []
+        for prompt, url in zip(unique_prompts, generated):
+            if not url:
+                merged_results[prompt] = {
+                    "url": None,
+                    "persistedAssetUrl": None,
+                    "assetId": None,
+                }
+                continue
+
+            saved_asset = await persist_remote_image_url_as_asset(
+                url,
+                self.asset_base_url,
+                self.user_id,
+            )
+            public_url = saved_asset.public_url if saved_asset else url
+            asset_id = self._resolve_saved_asset_id(saved_asset, public_url)
+            merged_results[prompt] = {
+                "url": public_url,
+                "persistedAssetUrl": public_url,
+                "assetId": asset_id,
+            }
+
+            if saved_asset:
+                read = local_asset_url_to_bytes(public_url)
+                if read is not None:
+                    data, mime_type = read
+                    multimodal_parts.append(
+                        ToolMultimodalPart(
+                            display_name=f"generated_{len(multimodal_parts)}.png",
+                            mime_type=mime_type,
+                            data=data,
+                        )
+                    )
+            else:
+                multimodal_parts.append(
+                    ToolMultimodalPart(
+                        display_name=f"generated_{len(multimodal_parts)}.png",
+                        mime_type=guess_image_mime(url),
+                        image_url=url,
+                    )
+                )
+        summary_items = []
+        result_items = []
+        for prompt, payload in merged_results.items():
+            url = payload["url"]
+            asset_id = payload["assetId"]
+            item = {
                 "prompt": prompt,
                 "url": url,
+                "persistedAssetUrl": url,
+                "assetId": asset_id,
                 "status": "ok" if url else "error",
+                "imageOperation": "create",
             }
-            for prompt, url in merged_results.items()
-        ]
-        result = {"images": merged_results}
+            result_items.append(item)
+            summary_items.append(item)
+        result = {
+            "images": result_items,
+            "imageMap": {
+                prompt: payload["persistedAssetUrl"] for prompt, payload in merged_results.items()
+            },
+        }
         summary = {"images": summary_items}
-        multimodal_parts = [
-            ToolMultimodalPart(
-                display_name=f"generated_{index}.png",
-                mime_type=guess_image_mime(url),
-                image_url=url,
-            )
-            for index, url in enumerate(merged_results.values())
-            if url
-        ]
         return ToolExecutionResult(
             ok=True,
             result=result,
             summary=summary,
             multimodal_parts=multimodal_parts,
+            metadata={
+                "image_update": (
+                    {
+                        "operation": "create",
+                        "status": "ok"
+                        if any(item["status"] == "ok" for item in result_items)
+                        else "error",
+                        "persistedAssetUrl": next(
+                            (
+                                item["persistedAssetUrl"]
+                                for item in result_items
+                                if item["status"] == "ok"
+                            ),
+                            None,
+                        ),
+                        "assetId": next(
+                            (
+                                item["assetId"]
+                                for item in result_items
+                                if item["status"] == "ok"
+                            ),
+                            None,
+                        ),
+                    }
+                    if result_items
+                    else None
+                )
+            },
         )
 
     async def _remove_background(self, args: Dict[str, Any]) -> ToolExecutionResult:
@@ -392,11 +592,15 @@ class AgentToolRuntime:
         )
 
     async def _edit_image(self, args: Dict[str, Any]) -> ToolExecutionResult:
-        if not REPLICATE_API_KEY:
+        if not REPLICATE_API_KEY and not self.openai_api_key:
             return ToolExecutionResult(
                 ok=False,
-                result={"error": "Image editing requires REPLICATE_API_KEY."},
-                summary={"error": "Missing Replicate API key"},
+                result={
+                    "error": (
+                        "Image editing requires REPLICATE_API_KEY or an OpenAI-compatible image model."
+                    )
+                },
+                summary={"error": "Missing image editing capability"},
             )
 
         prompt = ensure_str(args.get("prompt")).strip()
@@ -429,23 +633,47 @@ class AgentToolRuntime:
             aspect_ratio_value = "match_input_image"
         aspect_ratio = cast(PImageEditAspectRatio, aspect_ratio_value)
 
+        image_operation = "edit"
+        source_image_url = unique_urls[0]
+        parent_asset_id = None
         try:
-            result_url = await edit_image(
-                prompt=prompt,
-                image_urls=[local_asset_url_to_data_url(url) for url in unique_urls],
-                api_token=REPLICATE_API_KEY,
-                aspect_ratio=aspect_ratio,
-            )
+            if source_image_url.startswith(f"{self.asset_base_url.rstrip('/')}/local-assets/"):
+                parent_asset_id = (
+                    source_image_url.rsplit("/", 1)[-1]
+                    .split(".", 1)[0]
+                    .replace("asset_", "tmp_asset_")
+                )
+            if REPLICATE_API_KEY:
+                result_url = await edit_image(
+                    prompt=prompt,
+                    image_urls=[local_asset_url_to_data_url(url) for url in unique_urls],
+                    api_token=REPLICATE_API_KEY,
+                    aspect_ratio=aspect_ratio,
+                )
+            else:
+                image_operation = "fallback"
+                result_url = await generate_image_openai(
+                    prompt,
+                    self.openai_api_key or "",
+                    self.openai_base_url,
+                    image_url=source_image_url,
+                )
         except Exception as exc:
             print(f"Image edit failed for {unique_urls}: {exc}")
             return ToolExecutionResult(
-                ok=True,
+                ok=False,
                 result={
                     "image": {
                         "prompt": prompt,
                         "image_urls": unique_urls,
                         "result_url": None,
                         "status": "error",
+                        "imageOperation": image_operation,
+                        "assetLineage": {
+                            "sourceImageUrl": source_image_url,
+                            "parentAssetId": parent_asset_id,
+                        },
+                        "error": str(exc),
                     }
                 },
                 summary={
@@ -454,39 +682,90 @@ class AgentToolRuntime:
                         "image_urls": [summarize_text(url, 100) for url in unique_urls],
                         "result_url": None,
                         "status": "error",
+                        "imageOperation": image_operation,
+                        "error": str(exc),
+                    }
+                },
+                metadata={
+                    "image_update": {
+                        "operation": image_operation,
+                        "status": "error",
+                        "sourceImageUrl": source_image_url,
+                        "parentAssetId": parent_asset_id,
+                        "message": str(exc),
                     }
                 },
             )
 
+        saved_asset = await persist_remote_image_url_as_asset(
+            result_url,
+            self.asset_base_url,
+            self.user_id,
+        )
+        persisted_asset_url = saved_asset.public_url if saved_asset else result_url
+        asset_id = self._resolve_saved_asset_id(saved_asset, persisted_asset_url)
         result = {
             "image": {
                 "prompt": prompt,
                 "image_urls": unique_urls,
-                "result_url": result_url,
+                "result_url": persisted_asset_url,
                 "status": "ok",
                 "aspect_ratio": aspect_ratio,
+                "imageOperation": image_operation,
+                "persistedAssetUrl": persisted_asset_url,
+                "assetLineage": {
+                    "assetId": asset_id,
+                    "parentAssetId": parent_asset_id,
+                    "sourceImageUrl": source_image_url,
+                },
             }
         }
         summary = {
             "image": {
                 "prompt": summarize_text(prompt, 240),
                 "image_urls": [summarize_text(url, 100) for url in unique_urls],
-                "result_url": result_url,
+                "result_url": persisted_asset_url,
                 "status": "ok",
                 "aspect_ratio": aspect_ratio,
+                "imageOperation": image_operation,
+                "persistedAssetUrl": persisted_asset_url,
             }
         }
-        return ToolExecutionResult(
-            ok=True,
-            result=result,
-            summary=summary,
-            multimodal_parts=[
+        multimodal_parts: list[ToolMultimodalPart] = []
+        if saved_asset:
+            read = local_asset_url_to_bytes(saved_asset.public_url)
+            if read is not None:
+                data, mime_type = read
+                multimodal_parts.append(
+                    ToolMultimodalPart(
+                        display_name="edited.png",
+                        mime_type=mime_type,
+                        data=data,
+                    )
+                )
+        if not multimodal_parts:
+            multimodal_parts.append(
                 ToolMultimodalPart(
                     display_name="edited.png",
                     mime_type=guess_image_mime(result_url),
                     image_url=result_url,
                 )
-            ],
+            )
+        return ToolExecutionResult(
+            ok=True,
+            result=result,
+            summary=summary,
+            multimodal_parts=multimodal_parts,
+            metadata={
+                "image_update": {
+                    "operation": image_operation,
+                    "status": "ok",
+                    "sourceImageUrl": source_image_url,
+                    "persistedAssetUrl": persisted_asset_url,
+                    "assetId": asset_id,
+                    "parentAssetId": parent_asset_id,
+                }
+            },
         )
 
     def _retrieve_option(self, args: Dict[str, Any]) -> ToolExecutionResult:

@@ -1,6 +1,7 @@
 import {
   buildSelectedElementInstruction,
   describeElementContext,
+  resolveEditableTarget,
 } from "./utils";
 
 // Minimal stand-in for a DOM element; jest runs in the node environment.
@@ -8,6 +9,8 @@ interface FakeElement {
   tagName: string;
   outerHTML: string;
   parentElement: FakeElement | null;
+  children: FakeElement[];
+  textContent?: string;
   ownerDocument: { getElementsByTagName: (tag: string) => FakeElement[] };
   getAttribute: (name: string) => string | null;
 }
@@ -17,9 +20,16 @@ function fakeElement(tag: string, classAttr: string, outerHTML = ""): FakeElemen
     tagName: tag.toUpperCase(),
     outerHTML,
     parentElement: null,
+    children: [],
+    textContent: "",
     ownerDocument: { getElementsByTagName: () => [] },
     getAttribute: (name) => (name === "class" && classAttr ? classAttr : null),
   };
+}
+
+function appendChild(parent: FakeElement, child: FakeElement): void {
+  child.parentElement = parent;
+  parent.children.push(child);
 }
 
 function asElement(el: FakeElement): Element {
@@ -114,11 +124,54 @@ describe("buildSelectedElementInstruction", () => {
     expect(result).toContain("Element location: body > div.card > a.btn");
   });
 
+  it("adds edit-boundary self-check guidance", () => {
+    const result = buildSelectedElementInstruction(
+      "Center the controls",
+      '<div class="controls"><button>Play</button></div>'
+    );
+    expect(result).toContain("This snippet is the edit boundary");
+    expect(result).toContain("Content outside this selected scope remains visually unchanged");
+  });
+
   it("omits the context block when not provided", () => {
     const result = buildSelectedElementInstruction(
       "Make it red",
       '<a class="btn">Go</a>'
     );
     expect(result).not.toContain("Element location:");
+  });
+});
+
+describe("resolveEditableTarget", () => {
+  it("promotes an icon inside a button row to the parent control group", () => {
+    const controls = fakeElement("div", "controls");
+    const previous = fakeElement("button", "icon-btn", "<button><i></i></button>");
+    const play = fakeElement("button", "icon-btn", "<button><i></i></button>");
+    const next = fakeElement("button", "icon-btn", "<button><i></i></button>");
+    const icon = fakeElement("i", "fa fa-play", "<i class=\"fa fa-play\"></i>");
+
+    appendChild(controls, previous);
+    appendChild(controls, play);
+    appendChild(controls, next);
+    appendChild(play, icon);
+
+    expect(resolveEditableTarget(asElement(icon) as unknown as HTMLElement)).toBe(
+      controls as unknown as HTMLElement
+    );
+  });
+
+  it("promotes inline text to a richer card container", () => {
+    const card = fakeElement("div", "album-card");
+    const title = fakeElement("h3", "title", "<h3>Eclipse</h3>");
+    title.textContent = "Eclipse";
+    const subtitle = fakeElement("p", "artist", "<p>Artist Vox</p>");
+    subtitle.textContent = "Artist Vox";
+
+    appendChild(card, title);
+    appendChild(card, subtitle);
+
+    expect(
+      resolveEditableTarget(asElement(subtitle) as unknown as HTMLElement)
+    ).toBe(card as unknown as HTMLElement);
   });
 });

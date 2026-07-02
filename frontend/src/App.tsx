@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { generateCode } from "./generateCode";
-import { AppState, AppTheme, EditorTheme, Settings } from "./types";
+import { AppState, AppTheme, DesignSession, EditorTheme, Settings } from "./types";
 import { NEW_DESIGN_SYSTEM_CONTENT } from "./lib/design-systems";
 import { IS_RUNNING_ON_CLOUD } from "./config";
 import { OnboardingNote } from "./components/messages/OnboardingNote";
@@ -25,10 +25,18 @@ import {
 import { useAppStore } from "./store/app-store";
 import { useProjectStore } from "./store/project-store";
 import { useDesignSystems } from "./hooks/useDesignSystems";
+import { createWorkspaceId, useWorkspacePersistence } from "./hooks/useWorkspacePersistence";
 import {
   buildSelectedElementInstruction,
   describeElementContext,
 } from "./components/select-and-edit/utils";
+import {
+  classifyGenerationFailure,
+  evaluateTargetedEdit,
+  parseDesignUpdateIntent,
+  runPreviewSelfCheck,
+  summarizeImageUpdateStatus,
+} from "./lib/design-agent";
 import { useEscapeToExitSelectMode } from "./components/select-and-edit/useEscapeToExitSelectMode";
 import Sidebar from "./components/sidebar/Sidebar";
 import IconStrip from "./components/sidebar/IconStrip";
@@ -39,6 +47,69 @@ import SettingsTab from "./components/settings/SettingsTab";
 import DesignSystemsModal from "./components/settings/DesignSystemsModal";
 import { Commit } from "./components/commits/types";
 import { createCommit } from "./components/commits/utils";
+
+function createEmptyDesignSession(): DesignSession {
+  return {
+    goal: "",
+    constraints: "",
+    style: "",
+    references: "",
+    revisionLog: [],
+    lastUpdatedAt: null,
+  };
+}
+
+function buildSeededDesignSession(
+  promptText: string,
+  existingSession?: DesignSession
+): DesignSession {
+  const trimmedPrompt = promptText.trim();
+  const goal = trimmedPrompt || existingSession?.goal || "";
+  return {
+    goal,
+    constraints: existingSession?.constraints ?? "",
+    style: existingSession?.style ?? "",
+    references: existingSession?.references ?? "",
+    revisionLog: existingSession?.revisionLog ?? [],
+    lastUpdatedAt: new Date().toISOString(),
+  };
+}
+
+function appendRevisionEntry(
+  session: DesignSession,
+  entry: string
+): DesignSession {
+  const trimmedEntry = entry.trim();
+  if (!trimmedEntry) {
+    return {
+      ...session,
+      lastUpdatedAt: new Date().toISOString(),
+    };
+  }
+
+  return {
+    ...session,
+    revisionLog: [...(session.revisionLog ?? []), trimmedEntry].slice(-12),
+    lastUpdatedAt: new Date().toISOString(),
+  };
+}
+
+function summarizeDesignRevision(
+  generationType: "create" | "update",
+  promptText: string
+): string {
+  const trimmedPrompt = promptText.trim();
+  const prefix = generationType === "create" ? "Create" : "Update";
+  if (!trimmedPrompt) {
+    return prefix;
+  }
+  const maxLen = 120;
+  const clipped =
+    trimmedPrompt.length > maxLen
+      ? `${trimmedPrompt.slice(0, maxLen - 1)}…`
+      : trimmedPrompt;
+  return `${prefix}: ${clipped}`;
+}
 
 function App() {
   const {
@@ -53,17 +124,21 @@ function App() {
     resetPromptAssets,
 
     head,
+    draftHead,
     commits,
     addCommit,
     removeCommit,
     setHead,
+    setDraftHead,
     appendCommitCode,
     setCommitCode,
     resetCommits,
     resetHead,
+    resetDraftHead,
     updateVariantStatus,
     resizeVariants,
     setVariantModels,
+    patchVariant,
     appendVariantHistoryMessage,
     startAgentEvent,
     appendAgentEventContent,
@@ -107,6 +182,14 @@ function App() {
     AppTheme.SYSTEM,
     "app-theme"
   );
+  const [workspaceId, setWorkspaceId] = usePersistedState<string>(
+    createWorkspaceId(),
+    "workspace-id"
+  );
+  const [designSession, setDesignSession] = usePersistedState<DesignSession>(
+    createEmptyDesignSession(),
+    "design-session"
+  );
 
   const wsRef = useRef<WebSocket>(null);
   const lastThinkingEventIdRef = useRef<Record<number, string>>({});
@@ -127,6 +210,21 @@ function App() {
     updateDesignSystem,
     deleteDesignSystem,
   } = useDesignSystems();
+
+  const {
+    recentWorkspaces,
+    openWorkspace,
+    flushWorkspaceNow,
+    beginWorkspaceTransition,
+    endWorkspaceTransition,
+  } = useWorkspacePersistence({
+    workspaceId,
+    setWorkspaceId,
+    settings,
+    setSettings,
+    designSession,
+    setDesignSession,
+  });
 
   const setSelectedDesignSystemId = useCallback(
     (id: string | null) => {
@@ -208,6 +306,16 @@ function App() {
   ]);
 
   useEffect(() => {
+    if (draftHead !== null || !head) {
+      return;
+    }
+    const snapshot = commits[head]?.inputs?.designSessionSnapshot;
+    if (snapshot) {
+      setDesignSession(snapshot);
+    }
+  }, [commits, draftHead, head, setDesignSession]);
+
+  useEffect(() => {
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
     const applyTheme = () => {
       const isDark =
@@ -233,6 +341,11 @@ function App() {
 
   const getAssetsById = () => useProjectStore.getState().assetsById;
 
+  // Used when the user cancels the code generation
+  const cancelCodeGeneration = useCallback(() => {
+    wsRef.current?.close?.(USER_CLOSE_WEB_SOCKET_CODE);
+  }, []);
+
   // Functions
   const reset = () => {
     // Stop any in-flight generation so late websocket events can't mutate
@@ -246,12 +359,133 @@ function App() {
 
     resetCommits();
     resetHead();
+    resetDraftHead();
     resetPromptAssets();
+    setDesignSession(createEmptyDesignSession());
 
     // Inputs
     setInputMode("image");
     setReferenceImages([]);
   };
+
+  const handleOpenWorkspace = useCallback(
+    async (id: string) => {
+      cancelCodeGeneration();
+      const loaded = await openWorkspace(id);
+      if (loaded) {
+        setIsHistoryOpen(false);
+        setIsSettingsOpen(false);
+        setMobilePane("preview");
+      }
+      return loaded;
+    },
+    [cancelCodeGeneration, openWorkspace]
+  );
+
+  const handleNewProject = useCallback(async () => {
+    cancelCodeGeneration();
+
+    const nextWorkspaceId = createWorkspaceId();
+    try {
+      await flushWorkspaceNow();
+    } catch (error) {
+      console.error("Failed to checkpoint current workspace before creating a new one", error);
+      toast.error("Could not save the current workspace before starting a new one.");
+    }
+
+    beginWorkspaceTransition(nextWorkspaceId);
+    setWorkspaceId(nextWorkspaceId);
+    reset();
+    setIsHistoryOpen(false);
+    setIsSettingsOpen(false);
+    setMobilePane("preview");
+    window.setTimeout(() => {
+      endWorkspaceTransition();
+    }, 0);
+  }, [
+    beginWorkspaceTransition,
+    cancelCodeGeneration,
+    endWorkspaceTransition,
+    flushWorkspaceNow,
+    setWorkspaceId,
+  ]);
+
+  useEffect(() => {
+    const getQaSnapshot = () => {
+      const project = useProjectStore.getState();
+      const activeCommitHash = project.draftHead ?? project.head;
+      const activeCommit = activeCommitHash ? project.commits[activeCommitHash] : null;
+      const activeVariant = activeCommit
+        ? activeCommit.variants[activeCommit.selectedVariantIndex]
+        : null;
+      return {
+        workspaceId,
+        head: project.head,
+        draftHead: project.draftHead,
+        latestCommitHash: project.latestCommitHash,
+        activeCommitHash,
+        activeCommit,
+        activeVariant,
+        designSession,
+      };
+    };
+
+    type QaWindow = typeof window & {
+      __agentQaSnapshot?: () => unknown;
+      __agentQaControls?: {
+        openEditor: () => void;
+        openHistory: () => void;
+        openPreview: () => void;
+        createNewProject: () => Promise<void>;
+        openWorkspace: (id: string) => Promise<boolean>;
+        rollbackToVersion: (versionNumber: number) => boolean;
+      };
+    };
+
+    const qaWindow = window as QaWindow;
+    qaWindow.__agentQaSnapshot = getQaSnapshot;
+    qaWindow.__agentQaControls = {
+      openEditor: () => {
+        setIsHistoryOpen(false);
+        setIsSettingsOpen(false);
+        setMobilePane("preview");
+      },
+      openHistory: () => {
+        setIsHistoryOpen(true);
+        setIsSettingsOpen(false);
+        setMobilePane("chat");
+      },
+      openPreview: () => {
+        setIsHistoryOpen(false);
+        setIsSettingsOpen(false);
+        setMobilePane("preview");
+      },
+      createNewProject: async () => {
+        await handleNewProject();
+      },
+      openWorkspace: async (id: string) => handleOpenWorkspace(id),
+      rollbackToVersion: (versionNumber: number) => {
+        const sorted = Object.values(useProjectStore.getState().commits).sort(
+          (a, b) =>
+            new Date(a.dateCreated).getTime() - new Date(b.dateCreated).getTime()
+        );
+        const commit = sorted[versionNumber - 1];
+        if (!commit) {
+          return false;
+        }
+        setHead(commit.hash);
+        setIsHistoryOpen(false);
+        setIsSettingsOpen(false);
+        setMobilePane("preview");
+        return true;
+      },
+    };
+
+    return () => {
+      delete qaWindow.__agentQaSnapshot;
+      delete qaWindow.__agentQaControls;
+    };
+  }, [designSession, handleNewProject, handleOpenWorkspace, workspaceId]);
 
   const regenerate = () => {
     if (head === null) {
@@ -277,11 +511,6 @@ function App() {
     }
   };
 
-  // Used when the user cancels the code generation
-  const cancelCodeGeneration = () => {
-    wsRef.current?.close?.(USER_CLOSE_WEB_SOCKET_CODE);
-  };
-
   // Used for user-initiated cancellation and failed edit rollbacks
   const cancelCodeGenerationAndReset = (commit: Commit) => {
     // When the current commit is the first version, reset the entire app state
@@ -290,6 +519,7 @@ function App() {
     } else {
       // Otherwise, remove current commit from commits
       removeCommit(commit.hash);
+      resetDraftHead();
 
       // Revert to parent commit
       const parentCommitHash = commit.parentHash;
@@ -311,6 +541,12 @@ function App() {
     setAppState(AppState.CODING);
 
     const { variantHistory, ...requestParams } = params;
+    const revisionId = nanoid();
+    const runId = nanoid();
+    const parentCommitHash =
+      requestParams.generationType === "create" ? null : head;
+    const requestDesignSession =
+      requestParams.designSession ?? designSession;
 
     const selectedDesignSystem = designSystems.find(
       (designSystem) => designSystem.id === settings.selectedDesignSystemId
@@ -319,14 +555,27 @@ function App() {
     // Merge settings with params
     const updatedParams = {
       ...requestParams,
+      runId,
+      workspaceId,
+      revisionId,
+      parentCommitHash,
+      previewSelfCheckEnabled: true,
       ...settings,
       designSystem: selectedDesignSystem?.content ?? null,
+      designSession: requestDesignSession,
     };
-
-    // Use 4 variants for create, 2 for edits to match backend counts
-    // and avoid a flash when the backend sends the actual variant count
-    const initialVariantCount =
-      requestParams.generationType === "create" ? 4 : 2;
+    const promptWithMetadata = {
+      ...requestParams.prompt,
+      runId,
+      workspaceId,
+      revisionId,
+      parentCommitHash,
+      previewSelfCheckEnabled: true,
+      designSessionSnapshot: requestDesignSession,
+    };
+    // Mirror the backend's default variant counts to avoid UI flashes while
+    // still allowing the backend to expand the count via configuration.
+    const initialVariantCount = 1;
     const baseCommitObject = {
       variants: Array(initialVariantCount)
         .fill(null)
@@ -342,19 +591,19 @@ function App() {
             ...baseCommitObject,
             type: "ai_create" as const,
             parentHash: null,
-            inputs: requestParams.prompt,
+            inputs: promptWithMetadata,
           }
         : {
             ...baseCommitObject,
             type: "ai_edit" as const,
             parentHash: head,
-            inputs: requestParams.prompt,
+            inputs: promptWithMetadata,
           };
 
-    // Create a new commit and set it as the head
+    // Create a new commit and stage it as the active draft.
     const commit = createCommit(commitInputObject);
     addCommit(commit);
-    setHead(commit.hash);
+    setDraftHead(commit.hash);
 
     lastThinkingEventIdRef.current = {};
     lastAssistantEventIdRef.current = {};
@@ -402,6 +651,8 @@ function App() {
       });
     };
 
+    const variantBackendMetrics = new Map<number, any>();
+
     generateCode(wsRef, updatedParams, {
       onChange: (token, variantIndex) => {
         appendCommitCode(commit.hash, variantIndex, token);
@@ -413,10 +664,64 @@ function App() {
         appendExecutionConsole(variantIndex, line),
       onVariantComplete: (variantIndex) => {
         console.log(`Variant ${variantIndex} complete event received`);
-        updateVariantStatus(commit.hash, variantIndex, "complete");
         const currentCode =
           useProjectStore.getState().commits[commit.hash]?.variants[variantIndex]
             ?.code || "";
+        const selfCheckStartedAt = Date.now();
+        const selfCheck = runPreviewSelfCheck(currentCode);
+        const previewSelfCheckMs = Math.max(0, Date.now() - selfCheckStartedAt);
+        const requestStartedAt =
+          useProjectStore.getState().commits[commit.hash]?.variants[variantIndex]
+            ?.requestStartedAt ?? Date.now();
+        const commitSnapshot = useProjectStore.getState().commits[commit.hash];
+        const variantSnapshot = commitSnapshot?.variants[variantIndex];
+        const backendMetrics = variantBackendMetrics.get(variantIndex) || {};
+        const parentCode =
+          commit.parentHash &&
+          useProjectStore.getState().commits[commit.parentHash]?.variants[
+            useProjectStore.getState().commits[commit.parentHash]
+              .selectedVariantIndex ?? 0
+          ]?.code;
+        const computedTargeting =
+          commit.type === "ai_edit"
+            ? evaluateTargetedEdit({
+                previousCode: parentCode || "",
+                nextCode: currentCode,
+                selectedElementHtml: commit.inputs.selectedElementHtml,
+                designUpdateIntent: commit.inputs.designUpdateIntent,
+                userInstruction: commit.inputs.text,
+              })
+            : undefined;
+        const targeting = computedTargeting ?? backendMetrics.targeting;
+        const computedImageUpdateStatus = summarizeImageUpdateStatus(
+          variantSnapshot?.agentEvents ?? []
+        );
+        const imageUpdateStatus =
+          computedImageUpdateStatus ?? backendMetrics.imageUpdateStatus;
+        patchVariant(commit.hash, variantIndex, {
+          diagnostics: {
+            selfCheckStatus: selfCheck.status,
+            selfCheckSummary: selfCheck.summary,
+            selfCheckIssues: selfCheck.issues,
+            failureStage: backendMetrics.failureStage,
+            targeting,
+            imageUpdateStatus,
+          },
+          metrics: {
+            runId,
+            durationMs: Math.max(0, Date.now() - requestStartedAt),
+            stageTimings: {
+              ...backendMetrics.stageTimings,
+              previewSelfCheckMs,
+            },
+          },
+        });
+        updateVariantStatus(
+          commit.hash,
+          variantIndex,
+          selfCheck.status === "fail" ? "error" : "complete",
+          selfCheck.status === "fail" ? selfCheck.summary : undefined
+        );
         if (currentCode.trim().length > 0) {
           appendVariantHistoryMessage(
             commit.hash,
@@ -452,6 +757,19 @@ function App() {
       },
       onVariantError: (variantIndex, error) => {
         console.error(`Error in variant ${variantIndex}:`, error);
+        const backendMetrics = variantBackendMetrics.get(variantIndex) || {};
+        patchVariant(commit.hash, variantIndex, {
+          diagnostics: {
+            stage: classifyGenerationFailure(error),
+            message: error,
+            failureStage:
+              backendMetrics.failureStage || classifyGenerationFailure(error),
+          },
+          metrics: {
+            runId,
+            stageTimings: backendMetrics.stageTimings,
+          },
+        });
         updateVariantStatus(commit.hash, variantIndex, "error", error);
         finishThinkingEvent(variantIndex, "error");
         finishAssistantEvent(variantIndex, "error");
@@ -463,6 +781,9 @@ function App() {
       },
       onVariantModels: (models) => {
         setVariantModels(commit.hash, models);
+      },
+      onVariantMetrics: (data, variantIndex) => {
+        variantBackendMetrics.set(variantIndex, data || {});
       },
       onThinking: (content, variantIndex, eventId) => {
         if (!eventId) return;
@@ -538,17 +859,38 @@ function App() {
               );
             }
           });
+          setDraftHead(null);
+          setHead(commit.hash);
           setAppState(AppState.CODE_READY);
           return;
         }
 
         cancelCodeGenerationAndReset(commit);
       },
-      onComplete: () => {
+    onComplete: () => {
         // Same guard as onCancel: a generation finishing after its project
         // was reset must not pull the app back into the editor.
         if (!useProjectStore.getState().commits[commit.hash]) return;
         finishInFlightEvents("complete");
+        const completedCommit = useProjectStore.getState().commits[commit.hash];
+        const selectedVariant =
+          completedCommit?.variants[completedCommit.selectedVariantIndex];
+        const selfCheckStatus = selectedVariant?.diagnostics?.selfCheckStatus;
+        if (selfCheckStatus === "fail" && commit.type === "ai_edit") {
+          toast.error(
+            selectedVariant?.diagnostics?.selfCheckSummary ||
+              "The new draft failed preview self-check, so the previous version was kept."
+          );
+          cancelCodeGenerationAndReset(commit);
+          return;
+        }
+        setDraftHead(null);
+        setHead(commit.hash);
+        setDesignSession((prev) => ({
+          ...prev,
+          goal: prev.goal.trim() || requestParams.prompt.text.trim() || prev.goal,
+          lastUpdatedAt: new Date().toISOString(),
+        }));
         setAppState(AppState.CODE_READY);
       },
     });
@@ -566,6 +908,16 @@ function App() {
     // Set the input states
     setReferenceImages(referenceImages);
     setInputMode(inputMode);
+
+    const seededDesignSession = appendRevisionEntry(
+      buildSeededDesignSession(textPrompt, {
+      ...createEmptyDesignSession(),
+      goal: textPrompt.trim() || "Create a polished UI from the provided references.",
+      }),
+      summarizeDesignRevision("create", textPrompt)
+    );
+    setDesignSession(seededDesignSession);
+    const revisionId = nanoid();
 
     // Kick off the code generation
     if (referenceImages.length > 0) {
@@ -601,7 +953,16 @@ function App() {
           text: textPrompt,
           images: inputMode === "image" ? media : [],
           videos: inputMode === "video" ? media : [],
+          workspaceId,
+          revisionId,
+          parentCommitHash: null,
+          previewSelfCheckEnabled: true,
+          designSessionSnapshot: seededDesignSession,
         },
+        revisionId,
+        parentCommitHash: null,
+        previewSelfCheckEnabled: true,
+        designSession: seededDesignSession,
         variantHistory,
       });
     }
@@ -613,10 +974,32 @@ function App() {
 
     setInputMode("text");
     setInitialPrompt(text);
+    const seededDesignSession = appendRevisionEntry(
+      buildSeededDesignSession(text, {
+      ...createEmptyDesignSession(),
+      goal: text.trim() || "Create a polished UI from the provided brief.",
+      }),
+      summarizeDesignRevision("create", text)
+    );
+    setDesignSession(seededDesignSession);
+    const revisionId = nanoid();
     doGenerateCode({
       generationType: "create",
       inputMode: "text",
-      prompt: { text, images: [], videos: [] },
+      prompt: {
+        text,
+        images: [],
+        videos: [],
+        workspaceId,
+        revisionId,
+        parentCommitHash: null,
+        previewSelfCheckEnabled: true,
+        designSessionSnapshot: seededDesignSession,
+      },
+      revisionId,
+      parentCommitHash: null,
+      previewSelfCheckEnabled: true,
+      designSession: seededDesignSession,
       variantHistory: [buildUserHistoryMessage(text)],
     });
   }
@@ -644,18 +1027,20 @@ function App() {
 
     let modifiedUpdateInstruction = updateInstruction;
     let selectedElementHtml: string | undefined;
+    let selectedElementContext: string | undefined;
 
     // Send in a reference to the selected element if it exists. Selection
     // visuals are overlays, so the element's outerHTML is already clean.
     if (selectedElement) {
       const elementHtml = selectedElement.outerHTML;
       selectedElementHtml = elementHtml;
+      selectedElementContext = selectedElement.isConnected
+        ? describeElementContext(selectedElement)
+        : undefined;
       modifiedUpdateInstruction = buildSelectedElementInstruction(
         updateInstruction,
         elementHtml,
-        selectedElement.isConnected
-          ? describeElementContext(selectedElement)
-          : undefined
+        selectedElementContext
       );
       setSelectedElement(null);
     }
@@ -678,6 +1063,23 @@ function App() {
     const updatedHistory = shouldBootstrapFromFileState
       ? []
       : toRequestHistory(updatedVariantHistory, getAssetsById);
+    const seededUpdateSession = appendRevisionEntry(
+      {
+        ...designSession,
+        goal:
+          designSession.goal.trim() ||
+          initialPrompt.trim() ||
+          modifiedUpdateInstruction.trim() ||
+          designSession.goal,
+      },
+      summarizeDesignRevision("update", modifiedUpdateInstruction)
+    );
+    setDesignSession(seededUpdateSession);
+    const revisionId = nanoid();
+    const designUpdateIntent = parseDesignUpdateIntent(
+      updateInstruction,
+      selectedElement?.tagName?.toLowerCase() ?? null
+    );
 
     doGenerateCode({
       generationType: "update",
@@ -688,7 +1090,18 @@ function App() {
         images: updateImages,
         videos: [],
         selectedElementHtml,
+        selectedElementContext,
+        designUpdateIntent,
+        workspaceId,
+        revisionId,
+        parentCommitHash: head,
+        previewSelfCheckEnabled: true,
+        designSessionSnapshot: seededUpdateSession,
       },
+      revisionId,
+      parentCommitHash: head,
+      previewSelfCheckEnabled: true,
+      designSession: seededUpdateSession,
       history: updatedHistory,
       optionCodes,
       variantHistory: updatedVariantHistory,
@@ -785,10 +1198,7 @@ function App() {
             setMobilePane("preview");
           }}
           onNewProject={() => {
-            reset();
-            setIsHistoryOpen(false);
-            setIsSettingsOpen(false);
-            setMobilePane("preview");
+            void handleNewProject();
           }}
           onOpenSettings={() => {
             setIsSettingsOpen(true);
@@ -864,6 +1274,11 @@ function App() {
                     doUpdate={doUpdate}
                     regenerate={regenerate}
                     cancelCodeGeneration={cancelCodeGeneration}
+                    designSession={designSession}
+                    setDesignSession={setDesignSession}
+                    workspaceId={workspaceId}
+                    recentWorkspaces={recentWorkspaces}
+                    onOpenWorkspace={handleOpenWorkspace}
                     designSystem={{
                       designSystems,
                       selectedDesignSystemId: settings.selectedDesignSystemId,
@@ -901,16 +1316,21 @@ function App() {
         ) : (
           <>
             {appState === AppState.INITIAL && (
-              <StartPane
-                doCreate={doCreate}
-                doCreateFromText={doCreateFromText}
-                importFromCode={importFromCode}
-                settings={settings}
-                setSettings={setSettings}
-                designSystems={designSystems}
-                onAddNewDesignSystem={handleAddNewDesignSystem}
-                onManageDesignSystems={() => openDesignSystemsManager()}
-              />
+                <StartPane
+                  doCreate={doCreate}
+                  doCreateFromText={doCreateFromText}
+                  importFromCode={importFromCode}
+                  settings={settings}
+                  setSettings={setSettings}
+                  designSession={designSession}
+                  setDesignSession={setDesignSession}
+                  designSystems={designSystems}
+                  onAddNewDesignSystem={handleAddNewDesignSystem}
+                  onManageDesignSystems={() => openDesignSystemsManager()}
+                  workspaceId={workspaceId}
+                  recentWorkspaces={recentWorkspaces}
+                  onOpenWorkspace={handleOpenWorkspace}
+                />
             )}
 
             {isCodingOrReady && (

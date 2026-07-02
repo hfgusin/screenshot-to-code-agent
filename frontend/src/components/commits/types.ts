@@ -1,4 +1,9 @@
 import { PromptContent, PromptMessageRole } from "../../types";
+import {
+  AgentImageUpdateStatus,
+  AgentStageTimings,
+  AgentTargetingDiagnostics,
+} from "../../types";
 
 export type CommitHash = string;
 
@@ -38,6 +43,21 @@ export type Variant = {
   thinkingDuration?: number;
   agentEvents?: AgentEvent[];
   model?: string;
+  diagnostics?: {
+    stage?: string;
+    message?: string;
+    failureStage?: string;
+    selfCheckStatus?: "pass" | "warn" | "fail";
+    selfCheckSummary?: string;
+    selfCheckIssues?: string[];
+    targeting?: AgentTargetingDiagnostics;
+    imageUpdateStatus?: AgentImageUpdateStatus | null;
+  };
+  metrics?: {
+    durationMs?: number;
+    runId?: string;
+    stageTimings?: AgentStageTimings;
+  };
 };
 
 export type BaseCommit = {

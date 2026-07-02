@@ -111,6 +111,7 @@ class TestCreatePrompt:
                 "text": "Make a marketing mockup",
                 "images": [self.TEST_IMAGE_URL],
                 "videos": [],
+                "workspace_id": "workspace-123",
             },
             history=[],
             image_generation_enabled=True,
@@ -129,6 +130,101 @@ class TestCreatePrompt:
 
         assert "## Design system" in text
         assert "Reuse .mockup-frame" in text
+        assert "Workspace ID: workspace-123" in text
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_includes_design_session_when_present(
+        self,
+    ) -> None:
+        messages = await build_prompt_messages(
+            stack="html_css",
+            input_mode="text",
+            generation_type="update",
+            prompt={
+                "text": "Add a sidebar",
+                "images": [],
+                "videos": [],
+                "workspace_id": "workspace-123",
+            },
+            history=[
+                {
+                    "role": "assistant",
+                    "text": "<html>Initial code</html>",
+                    "images": [],
+                    "videos": [],
+                },
+                {
+                    "role": "user",
+                    "text": "Add a sidebar",
+                    "images": [],
+                    "videos": [],
+                },
+            ],
+            design_session={
+                "goal": "Create a polished product dashboard",
+                "style": "editorial minimal",
+                "constraints": "Keep the existing top nav",
+                "references": "https://example.com/dashboard",
+                "revision_log": ["Create: initial dashboard"],
+            },
+            image_generation_enabled=True,
+        )
+
+        user_messages = [
+            msg for msg in messages if msg.get("role") == "user"
+        ]
+        assert user_messages, "Expected at least one user message"
+        user_content = user_messages[0].get("content")
+        assert isinstance(user_content, str)
+        assert "## Persistent design session" in user_content
+        assert "Workspace ID: workspace-123" in user_content
+        assert "Create a polished product dashboard" in user_content
+        assert "Current session goal:" in user_content
+        assert "Current turn:" in user_content
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_highlights_image_assets_from_history(
+        self,
+    ) -> None:
+        messages = await build_prompt_messages(
+            stack="html_tailwind",
+            input_mode="text",
+            generation_type="update",
+            prompt={
+                "text": "Make the shoes pink",
+                "images": [],
+                "videos": [],
+            },
+            history=[
+                {
+                    "role": "assistant",
+                    "text": (
+                        '<html><body>'
+                        '<img src="https://example.com/shoes.png">'
+                        '<div style="background-image:url(/local-assets/banner.png)"></div>'
+                        "</body></html>"
+                    ),
+                    "images": [],
+                    "videos": [],
+                },
+                {
+                    "role": "user",
+                    "text": "Make the shoes pink",
+                    "images": [],
+                    "videos": [],
+                },
+            ],
+            image_generation_enabled=True,
+        )
+
+        user_messages = [msg for msg in messages if msg.get("role") == "user"]
+        assert user_messages, "Expected at least one user message"
+        user_content = user_messages[0].get("content")
+        assert isinstance(user_content, str)
+        assert "Current image assets from the latest draft" in user_content
+        assert "https://example.com/shoes.png" in user_content
+        assert "/local-assets/banner.png" in user_content
+        assert "Prefer editing the existing asset with `edit_image`" in user_content
 
     def test_plan_update_with_history_uses_history_strategy(self) -> None:
         plan = derive_prompt_construction_plan(
@@ -149,6 +245,67 @@ class TestCreatePrompt:
             file_state={"path": "index.html", "content": "<html></html>"},
         )
         assert plan["construction_strategy"] == "update_from_file_snapshot"
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_compresses_long_history(self) -> None:
+        history = [
+            {
+                "role": "user",
+                "text": "Make a landing page with a hero, feature grid, and testimonials.",
+                "images": [],
+                "videos": [],
+            },
+        ]
+        for index in range(1, 8):
+            history.append(
+                {
+                    "role": "assistant" if index % 2 else "user",
+                    "text": f"turn {index}",
+                    "images": [],
+                    "videos": [],
+                }
+            )
+        history.append(
+            {
+                "role": "user",
+                "text": "Tighten spacing and make it feel more editorial.",
+                "images": [],
+                "videos": [],
+            }
+        )
+
+        messages = await build_prompt_messages(
+            stack=self.TEST_STACK,
+            input_mode="text",
+            generation_type="update",
+            prompt={"text": "", "images": [], "videos": []},
+            history=history,
+            image_generation_enabled=True,
+            design_session={
+                "goal": "Create a polished landing page",
+                "revision_log": [f"Revision {i}" for i in range(8)],
+            },
+        )
+
+        system_messages = [
+            msg for msg in messages if msg.get("role") == "system"
+        ]
+        assert any(
+            "compressed" in str(msg.get("content", "")).lower()
+            for msg in system_messages
+        )
+
+        user_messages = [msg for msg in messages if msg.get("role") == "user"]
+        assert user_messages, "Expected user messages in compressed history"
+        combined_user_text = "\n".join(
+            str(msg.get("content", "")) for msg in user_messages
+        )
+        assert "Make a landing page with a hero" in combined_user_text
+        assert "Tighten spacing and make it feel more editorial." in combined_user_text
+        assert "turn 1" not in combined_user_text
+        assert "turn 2" not in combined_user_text
+        assert "Revision 7" in combined_user_text
+        assert "Earlier revisions" in combined_user_text
 
     @pytest.mark.asyncio
     async def test_image_mode_create_single_image(self) -> None:

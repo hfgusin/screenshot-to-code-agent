@@ -1,6 +1,8 @@
 from enum import Enum
 from typing import TypedDict
 
+from config import OPENAI_MODEL
+
 
 # Actual model versions that are passed to the LLMs and stored in our logs
 class Llm(Enum):
@@ -16,6 +18,7 @@ class Llm(Enum):
     GPT_5_5_MEDIUM = "gpt-5.5 (medium thinking)"
     GPT_5_5_HIGH = "gpt-5.5 (high thinking)"
     GPT_5_5_XHIGH = "gpt-5.5 (xhigh thinking)"
+    DOUBAO_SEED_2_0_MINI_260428 = "doubao-seed-2-0-mini-260428"
     # Claude
     CLAUDE_SONNET_4_6 = "claude-sonnet-4-6"
     CLAUDE_OPUS_4_6 = "claude-opus-4-6"
@@ -62,6 +65,7 @@ MODEL_PROVIDER: dict[Llm, str] = {
     Llm.GPT_5_5_MEDIUM: "openai",
     Llm.GPT_5_5_HIGH: "openai",
     Llm.GPT_5_5_XHIGH: "openai",
+    Llm.DOUBAO_SEED_2_0_MINI_260428: "openai",
     # Anthropic models
     Llm.CLAUDE_SONNET_4_6: "anthropic",
     Llm.CLAUDE_OPUS_4_6: "anthropic",
@@ -119,12 +123,17 @@ OPENAI_MODEL_CONFIG: dict[Llm, dict[str, str]] = {
     Llm.GPT_5_5_MEDIUM: {"api_name": "gpt-5.5", "reasoning_effort": "medium"},
     Llm.GPT_5_5_HIGH: {"api_name": "gpt-5.5", "reasoning_effort": "high"},
     Llm.GPT_5_5_XHIGH: {"api_name": "gpt-5.5", "reasoning_effort": "xhigh"},
+    Llm.DOUBAO_SEED_2_0_MINI_260428: {"api_name": "doubao-seed-2-0-mini-260428"},
 }
 
 
 def get_openai_api_name(model: Llm) -> str:
+    if OPENAI_MODEL:
+        return OPENAI_MODEL
     return OPENAI_MODEL_CONFIG[model]["api_name"]
 
 
 def get_openai_reasoning_effort(model: Llm) -> str | None:
+    if OPENAI_MODEL:
+        return None
     return OPENAI_MODEL_CONFIG.get(model, {}).get("reasoning_effort")

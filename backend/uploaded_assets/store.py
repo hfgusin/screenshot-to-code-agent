@@ -1,11 +1,13 @@
 import base64
 import hashlib
 import json
+import mimetypes
 import os
 import tempfile
 from dataclasses import dataclass
 from typing import Any, cast
 
+import httpx
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 
@@ -255,6 +257,38 @@ async def persist_data_url_as_asset(
     image_bytes, content_type, extension = decoded
     return _finalize_asset_bytes(
         image_bytes, extension, content_type, asset_base_url, user_id
+    )
+
+
+async def persist_remote_image_url_as_asset(
+    image_url: str,
+    asset_base_url: str,
+    user_id: str | None = None,
+) -> SavedAsset | None:
+    """Download a remote image URL and persist it as a durable local asset."""
+    timeout = httpx.Timeout(30.0)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        response = await client.get(image_url)
+        response.raise_for_status()
+
+    content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if not content_type.startswith("image/"):
+        return None
+
+    image_bytes = response.content
+    if len(image_bytes) > MAX_UPLOADED_ASSET_BYTES:
+        return None
+
+    extension = mimetypes.guess_extension(content_type) or ".png"
+    if extension == ".jpe":
+        extension = ".jpg"
+
+    return _finalize_asset_bytes(
+        image_bytes,
+        extension,
+        content_type,
+        asset_base_url,
+        user_id,
     )
 
 

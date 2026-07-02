@@ -58,3 +58,52 @@ def test_parse_prompt_content_ignores_blank_full_text() -> None:
     )
 
     assert "full_text" not in prompt
+
+
+def test_snapshot_prompt_truncates_large_file_state() -> None:
+    prompt = parse_prompt_content(
+        {"text": "Tighten the hero spacing", "images": [], "videos": []}
+    )
+    large_file_state = {
+        "path": "index.html",
+        "content": "<html>" + ("a" * 13000) + "</html>",
+    }
+
+    messages = build_update_prompt_from_file_snapshot(
+        stack="html_tailwind",
+        prompt=prompt,
+        file_state=large_file_state,
+        image_generation_enabled=False,
+    )
+
+    text = _user_text(messages)
+    assert "characters omitted for prompt compression" in text
+    assert len(text) < len(large_file_state["content"]) + 2000
+
+
+def test_snapshot_prompt_highlights_current_image_assets() -> None:
+    prompt = parse_prompt_content(
+        {"text": "Make the shoes pink", "images": [], "videos": []}
+    )
+    file_state = {
+        "path": "index.html",
+        "content": (
+            '<html><body>'
+            '<img src="https://example.com/shoes.png">'
+            '<div style="background-image:url(/local-assets/banner.png)"></div>'
+            "</body></html>"
+        ),
+    }
+
+    messages = build_update_prompt_from_file_snapshot(
+        stack="html_tailwind",
+        prompt=prompt,
+        file_state=file_state,
+        image_generation_enabled=True,
+    )
+
+    text = _user_text(messages)
+    assert "Current image assets in the draft" in text
+    assert "https://example.com/shoes.png" in text
+    assert "/local-assets/banner.png" in text
+    assert "Prefer editing the existing asset with `edit_image`" in text

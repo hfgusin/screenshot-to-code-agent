@@ -1,5 +1,5 @@
 import { useProjectStore } from "../../store/project-store";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useThrottle } from "../../hooks/useThrottle";
 import {
   CODE_GENERATION_MODEL_DESCRIPTIONS,
@@ -77,19 +77,23 @@ function VariantThumbnail({ code, isSelected }: VariantThumbnailProps) {
 }
 
 function Variants() {
-  const { head, commits, updateSelectedVariantIndex, inputMode } =
+  const { head, draftHead, commits, updateSelectedVariantIndex, inputMode } =
     useProjectStore();
 
-  const commit = head ? commits[head] : null;
+  const activeCommitHash = draftHead ?? head;
+  const commit = activeCommitHash ? commits[activeCommitHash] : null;
   const variants = commit?.variants || [];
   const selectedVariantIndex = commit?.selectedVariantIndex || 0;
   const generationType: "create" | "update" =
     commit?.type === "ai_create" ? "create" : "update";
 
-  const handleVariantClick = (index: number) => {
-    if (index === selectedVariantIndex || !head) return;
-    updateSelectedVariantIndex(head, index);
-  };
+  const handleVariantClick = useCallback(
+    (index: number) => {
+      if (index === selectedVariantIndex || !activeCommitHash) return;
+      updateSelectedVariantIndex(activeCommitHash, index);
+    },
+    [activeCommitHash, selectedVariantIndex, updateSelectedVariantIndex]
+  );
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -112,9 +116,9 @@ function Variants() {
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [variants.length, commit?.isCommitted, selectedVariantIndex, head]);
+  }, [variants.length, commit, commit?.isCommitted, handleVariantClick]);
 
-  if (head === null || !commit) {
+  if (activeCommitHash === null || !commit) {
     return null;
   }
 

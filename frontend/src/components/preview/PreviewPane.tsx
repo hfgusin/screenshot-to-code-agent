@@ -17,6 +17,7 @@ import CodeTab from "./CodeTab";
 import { Button } from "../ui/button";
 import { useAppStore } from "../../store/app-store";
 import { useProjectStore } from "../../store/project-store";
+import { Commit } from "../commits/types";
 import { extractHtml } from "./extractHtml";
 import PreviewComponent from "./PreviewComponent";
 import { downloadCode } from "./download";
@@ -38,7 +39,7 @@ interface Props {
 
 function PreviewPane({ settings, onOpenVersions }: Props) {
   const { appState } = useAppStore();
-  const { inputMode, head, commits, setHead } = useProjectStore();
+  const { inputMode, head, draftHead, commits, setHead } = useProjectStore();
   const [activeTab, setActiveTab] = useState("desktop");
   const [desktopScale, setDesktopScale] = useState(1);
   const [desktopViewMode, setDesktopViewMode] = useState<"fit" | "actual">("fit");
@@ -49,20 +50,22 @@ function PreviewPane({ settings, onOpenVersions }: Props) {
       (a, b) => new Date(a.dateCreated).getTime() - new Date(b.dateCreated).getTime()
     ), [commits]);
 
-  const currentVersionIndex = sortedCommits.findIndex(c => c.hash === head);
+  const activeCommitHash = draftHead ?? head;
+  const currentVersionIndex = sortedCommits.findIndex(c => c.hash === activeCommitHash);
   const totalVersions = sortedCommits.length;
   const canGoPrev = currentVersionIndex > 0;
   const canGoNext = currentVersionIndex < totalVersions - 1;
 
-  const currentCommit = head && commits[head] ? commits[head] : "";
+  const currentCommit: Commit | null =
+    activeCommitHash && commits[activeCommitHash] ? commits[activeCommitHash] : null;
   const currentCode = currentCommit
     ? currentCommit.variants[currentCommit.selectedVariantIndex].code
     : "";
 
   const isSelectedVariantComplete =
-    head &&
-    commits[head] &&
-    commits[head].variants[commits[head].selectedVariantIndex].status ===
+    activeCommitHash &&
+    commits[activeCommitHash] &&
+    commits[activeCommitHash].variants[commits[activeCommitHash].selectedVariantIndex].status ===
       "complete";
 
   const previewCode =
@@ -225,6 +228,7 @@ function PreviewPane({ settings, onOpenVersions }: Props) {
             device="desktop"
             onScaleChange={setDesktopScale}
             viewMode={desktopViewMode}
+            isGenerating={appState === AppState.CODING}
           />
         </TabsContent>
         <TabsContent value="mobile" className="flex-1 min-h-0 mt-0 data-[state=active]:flex data-[state=active]:flex-col">
@@ -232,6 +236,7 @@ function PreviewPane({ settings, onOpenVersions }: Props) {
             code={previewCode}
             device="mobile"
             viewMode="actual"
+            isGenerating={appState === AppState.CODING}
           />
         </TabsContent>
         <TabsContent value="code" className="flex-1 min-h-0 mt-0 overflow-auto">

@@ -2,7 +2,7 @@ from custom_types import InputMode
 from prompts.create.image import build_image_prompt_messages
 from prompts.create.text import build_text_prompt_messages
 from prompts.create.video import build_video_prompt_messages
-from prompts.prompt_types import Stack, UserTurnInput
+from prompts.prompt_types import DesignSession, Stack, UserTurnInput
 from prompts.message_builder import Prompt
 
 
@@ -11,8 +11,10 @@ def build_create_prompt_from_input(
     stack: Stack,
     prompt: UserTurnInput,
     image_generation_enabled: bool,
+    design_session: DesignSession | None = None,
     design_system: str | None = None,
 ) -> Prompt:
+    workspace_id = prompt.get("workspace_id")
     if input_mode == "image":
         image_urls = prompt.get("images", [])
         text_prompt = prompt.get("text", "")
@@ -21,14 +23,18 @@ def build_create_prompt_from_input(
             stack=stack,
             text_prompt=text_prompt,
             image_generation_enabled=image_generation_enabled,
+            design_session=design_session,
             design_system=design_system,
+            workspace_id=workspace_id,
         )
     if input_mode == "text":
         return build_text_prompt_messages(
             text_prompt=prompt["text"],
             stack=stack,
             image_generation_enabled=image_generation_enabled,
+            design_session=design_session,
             design_system=design_system,
+            workspace_id=workspace_id,
         )
     if input_mode == "video":
         video_urls = prompt.get("videos", [])
@@ -40,7 +46,9 @@ def build_create_prompt_from_input(
             stack=stack,
             text_prompt=prompt.get("text", ""),
             image_generation_enabled=image_generation_enabled,
+            design_session=design_session,
             design_system=design_system,
+            workspace_id=workspace_id,
         )
     raise ValueError(f"Unsupported input mode: {input_mode}")
 

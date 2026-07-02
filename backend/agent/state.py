@@ -3,7 +3,7 @@ from typing import Any, List
 
 from openai.types.chat import ChatCompletionMessageParam
 
-from codegen.utils import extract_html_content
+from codegen.utils import extract_html_content, is_renderable_html_document
 
 
 @dataclass
@@ -43,10 +43,11 @@ def seed_file_state_from_messages(
         if not raw_text:
             continue
         extracted = extract_html_content(raw_text)
-        file_state.content = extracted or raw_text
-        if not file_state.path:
-            file_state.path = "index.html"
-        return
+        if is_renderable_html_document(extracted):
+            file_state.content = extracted
+            if not file_state.path:
+                file_state.path = "index.html"
+            return
 
     if not prompt_messages:
         return
@@ -64,7 +65,8 @@ def seed_file_state_from_messages(
             continue
         raw_text = system_text.split(marker, 1)[1].strip()
         extracted = extract_html_content(raw_text)
-        file_state.content = extracted or raw_text
-        if not file_state.path:
-            file_state.path = "index.html"
-        return
+        if is_renderable_html_document(extracted):
+            file_state.content = extracted
+            if not file_state.path:
+                file_state.path = "index.html"
+            return

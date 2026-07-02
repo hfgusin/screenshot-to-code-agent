@@ -31,3 +31,17 @@ def extract_html_content(text: str) -> str:
             "[HTML Extraction] No <html> tags found in the generated content"
         )
         return text
+
+
+def is_renderable_html_document(text: str) -> bool:
+    extracted = extract_html_content(text).strip()
+    return bool(
+        re.search(r"<!DOCTYPE\s+html\b", extracted, re.IGNORECASE)
+        or re.search(r"<html\b", extracted, re.IGNORECASE)
+    )
+
+
+def contains_html_markup(text: str) -> bool:
+    cleaned = re.sub(r'^```[a-z]*\s*\n?', '', text.strip(), flags=re.IGNORECASE | re.MULTILINE)
+    cleaned = re.sub(r'\n?```\s*$', '', cleaned, flags=re.MULTILINE)
+    return bool(re.search(r"<[a-zA-Z][\w:-]*(?:\s[^<>]*)?>", cleaned) or re.search(r"</[a-zA-Z][\w:-]*\s*>", cleaned))

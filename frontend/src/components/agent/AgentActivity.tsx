@@ -892,7 +892,7 @@ function AgentEventCard({
 }
 
 function AgentActivity() {
-  const { head, commits, latestCommitHash } = useProjectStore();
+  const { head, draftHead, commits, latestCommitHash } = useProjectStore();
   const [stepsExpandedByVariant, setStepsExpandedByVariant] = useState<
     Record<string, boolean>
   >({});
@@ -905,7 +905,8 @@ function AgentActivity() {
     return () => window.clearInterval(intervalId);
   }, [appState]);
 
-  const currentCommit = head ? commits[head] : null;
+  const activeCommitHash = draftHead ?? head;
+  const currentCommit = activeCommitHash ? commits[activeCommitHash] : null;
   const selectedVariant = currentCommit
     ? currentCommit.variants[currentCommit.selectedVariantIndex]
     : null;
@@ -924,7 +925,7 @@ function AgentActivity() {
       ? new Date(currentCommit.dateCreated).getTime()
       : undefined);
 
-  const isLatestCommit = head === latestCommitHash;
+  const isLatestCommit = activeCommitHash === latestCommitHash;
   if (!isLatestCommit || events.length === 0) {
     return null;
   }

@@ -17,6 +17,29 @@ def test_parse_prompt_content_with_valid_data() -> None:
     }
 
 
+def test_parse_prompt_content_preserves_revision_metadata() -> None:
+    result = parse_prompt_content(
+        {
+            "text": "Update the hero",
+            "images": [],
+            "videos": [],
+            "selectedElementHtml": "<button>Save</button>",
+            "selectedElementContext": "Element location: main > div > button",
+            "workspaceId": "workspace-123",
+            "revisionId": "rev-123",
+            "parentCommitHash": "commit-abc",
+            "previewSelfCheckEnabled": True,
+        }
+    )
+
+    assert result["workspace_id"] == "workspace-123"
+    assert result["selected_element_html"] == "<button>Save</button>"
+    assert result["selected_element_context"] == "Element location: main > div > button"
+    assert result["revision_id"] == "rev-123"
+    assert result["parent_commit_hash"] == "commit-abc"
+    assert result["preview_self_check_enabled"] is True
+
+
 def test_parse_prompt_content_filters_invalid_media_types() -> None:
     result = parse_prompt_content(
         {

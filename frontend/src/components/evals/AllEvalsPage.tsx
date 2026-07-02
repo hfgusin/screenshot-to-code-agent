@@ -59,6 +59,18 @@ function AllEvalsPage() {
               Browse logged LLM requests with images, usage, and cost
             </p>
           </Link>
+
+          <Link
+            to="/evals/agent-qa"
+            className="block w-full p-4 bg-white rounded-lg shadow hover:shadow-md transition-shadow border border-gray-200"
+          >
+            <h2 className="text-xl font-semibold text-gray-800">
+              Agent QA
+            </h2>
+            <p className="text-gray-600">
+              Review live/mock regression runs, quality signals, and recent workspace metrics
+            </p>
+          </Link>
         </div>
       </div>
     </div>

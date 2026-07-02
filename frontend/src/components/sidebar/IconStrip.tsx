@@ -30,6 +30,7 @@ function IconStrip({
       {/* Logo */}
       <button
         onClick={onLogoClick}
+        data-testid="icon-home"
         className="rounded-lg p-2 transition-colors hover:bg-gray-200/70 dark:hover:bg-zinc-800 lg:mb-2 lg:p-1"
       >
         <img
@@ -44,6 +45,7 @@ function IconStrip({
         {showEditor && (
           <button
             onClick={onToggleEditor}
+            data-testid="icon-editor"
             className={`flex items-center justify-center rounded-lg p-2 transition-colors lg:flex-col lg:gap-1 lg:px-2 lg:py-1.5 ${
               isEditorOpen
                 ? "text-gray-900 dark:text-white"
@@ -60,6 +62,7 @@ function IconStrip({
         {showHistory && (
           <button
             onClick={onToggleHistory}
+            data-testid="icon-history"
             className={`flex items-center justify-center rounded-lg p-2 transition-colors lg:flex-col lg:gap-1 lg:px-2 lg:py-1.5 ${
               isHistoryOpen
                 ? "text-gray-900 dark:text-white"
@@ -74,6 +77,7 @@ function IconStrip({
 
         <button
           onClick={onNewProject}
+          data-testid="icon-new-project"
           className="flex items-center justify-center rounded-lg p-2 transition-colors bg-violet-100 text-violet-700 hover:bg-violet-200 lg:flex-col lg:gap-1 lg:px-2 lg:py-1.5 dark:bg-violet-900/40 dark:text-violet-200 dark:hover:bg-violet-900/60"
           title="Start a new project"
         >
@@ -88,6 +92,7 @@ function IconStrip({
       {/* Settings */}
       <button
         onClick={onOpenSettings}
+        data-testid="icon-settings"
         className={`flex items-center justify-center rounded-lg p-2 transition-colors lg:flex-col lg:gap-1 lg:px-2 lg:py-1.5 ${
           isSettingsOpen
             ? "text-gray-900 dark:text-white"
