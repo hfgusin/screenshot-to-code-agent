@@ -3,7 +3,7 @@ from prompts.design_session import (
     build_design_session_prompt_block,
     build_revision_metadata_block,
 )
-from prompts.prompt_types import DesignSession, Stack
+from prompts.prompt_types import DesignSession, IntentDecision, Stack
 from prompts import system_prompt
 from prompts.design_system import build_design_system_prompt_block
 from prompts.policies import build_selected_stack_policy, build_user_image_policy
@@ -18,6 +18,7 @@ def build_video_prompt_messages(
     design_system: str | None = None,
     workspace_id: str | None = None,
     turn_intent: str | None = None,
+    intent_decision: IntentDecision | None = None,
 ) -> list[ChatCompletionMessageParam]:
     image_policy = build_user_image_policy(image_generation_enabled)
     selected_stack = build_selected_stack_policy(stack)
@@ -28,6 +29,7 @@ def build_video_prompt_messages(
     revision_metadata_block = build_revision_metadata_block(
         workspace_id=workspace_id,
         turn_intent=turn_intent,
+        intent_decision=intent_decision,
     )
     user_text = f"""
     You have been given a video of a user interacting with a web app. You need to re-create the same app exactly such that the same user interactions will produce the same results in the app you build.
@@ -42,6 +44,7 @@ def build_video_prompt_messages(
     - MAKE THE APP FUNCTIONAL using JavaScript. Allow the user to interact with the app and get the same behavior as shown in the video.
     - Use SVGs and interactive 3D elements if needed to match the functionality shown in the video.
     - Respect the current turn intent when shaping the response: generate = fresh first draft, modify = localized edit, repair = fix the broken part, question = ask a concise clarification or render a question screen.
+    - If the intent confidence is low, prefer asking a concise clarification instead of inventing details.
 
     Analyze this video and generate the code.
     

@@ -112,6 +112,8 @@ function DesignSessionPanel({
       </div>
 
       {(designSession.lastIntent ||
+        designSession.intentReason ||
+        designSession.intentSignals?.length ||
         designSession.pendingQuestion ||
         designSession.reviewSummary) && (
         <div className="mt-4 grid gap-2">
@@ -123,6 +125,28 @@ function DesignSessionPanel({
               <div className="text-violet-900 dark:text-violet-100">
                 {designSession.lastIntent}
               </div>
+              {typeof designSession.intentConfidence === "number" && (
+                <div className="mt-1 text-violet-700 dark:text-violet-300">
+                  confidence {(designSession.intentConfidence * 100).toFixed(0)}%
+                </div>
+              )}
+              {designSession.intentReason && (
+                <div className="mt-1 text-violet-700/90 dark:text-violet-300/90">
+                  {designSession.intentReason}
+                </div>
+              )}
+              {!!designSession.intentSignals?.length && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {designSession.intentSignals.map((signal) => (
+                    <span
+                      key={signal}
+                      className="rounded-full border border-violet-200 bg-white/80 px-2 py-0.5 text-[10px] uppercase tracking-wider text-violet-700 dark:border-violet-900/50 dark:bg-zinc-900 dark:text-violet-200"
+                    >
+                      {signal}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           {designSession.pendingQuestion && (

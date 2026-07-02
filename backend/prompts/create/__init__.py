@@ -2,7 +2,7 @@ from custom_types import InputMode
 from prompts.create.image import build_image_prompt_messages
 from prompts.create.text import build_text_prompt_messages
 from prompts.create.video import build_video_prompt_messages
-from prompts.prompt_types import DesignSession, Stack, UserTurnInput
+from prompts.prompt_types import DesignSession, IntentDecision, Stack, UserTurnInput
 from prompts.message_builder import Prompt
 
 
@@ -13,6 +13,7 @@ def build_create_prompt_from_input(
     image_generation_enabled: bool,
     design_session: DesignSession | None = None,
     design_system: str | None = None,
+    intent_decision: IntentDecision | None = None,
 ) -> Prompt:
     workspace_id = prompt.get("workspace_id")
     if input_mode == "image":
@@ -27,6 +28,7 @@ def build_create_prompt_from_input(
             design_system=design_system,
             workspace_id=workspace_id,
             turn_intent=prompt.get("turn_intent"),
+            intent_decision=intent_decision or prompt.get("intent_decision"),
         )
     if input_mode == "text":
         return build_text_prompt_messages(
@@ -37,6 +39,7 @@ def build_create_prompt_from_input(
             design_system=design_system,
             workspace_id=workspace_id,
             turn_intent=prompt.get("turn_intent"),
+            intent_decision=intent_decision or prompt.get("intent_decision"),
         )
     if input_mode == "video":
         video_urls = prompt.get("videos", [])
@@ -52,6 +55,7 @@ def build_create_prompt_from_input(
             design_system=design_system,
             workspace_id=workspace_id,
             turn_intent=prompt.get("turn_intent"),
+            intent_decision=intent_decision or prompt.get("intent_decision"),
         )
     raise ValueError(f"Unsupported input mode: {input_mode}")
 

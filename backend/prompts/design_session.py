@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from prompts.prompt_types import DesignSession, DesignUpdateIntent, UserTurnInput
+from prompts.prompt_types import DesignSession, DesignUpdateIntent, IntentDecision, UserTurnInput
 
 MAX_REVISION_LOG_ENTRIES = 6
 
@@ -30,6 +30,7 @@ def build_revision_metadata_block(
     selected_element_context: str | None = None,
     preview_self_check_enabled: bool | None = None,
     turn_intent: str | None = None,
+    intent_decision: IntentDecision | None = None,
 ) -> str:
     lines: list[str] = []
     if workspace_id and workspace_id.strip():
@@ -46,6 +47,13 @@ def build_revision_metadata_block(
         lines.append(f"- Preview self-check: {state}")
     if turn_intent and turn_intent.strip():
         lines.append(f"- Turn intent: {turn_intent.strip()}")
+    if intent_decision:
+        lines.append(f"- Intent confidence: {intent_decision.get('confidence', 0):.2f}")
+        if intent_decision.get("reason", "").strip():
+            lines.append(f"- Intent reason: {intent_decision.get('reason', '').strip()}")
+        if intent_decision.get("signals"):
+            lines.append("### Matched signals")
+            lines.extend(f"- {signal}" for signal in intent_decision.get("signals", []))
     if not lines:
         return ""
     return "\n".join(["## Revision metadata", *lines])
@@ -89,6 +97,14 @@ def build_design_session_prompt_block(
         _section("Style direction", design_session.get("style")),
         _section("References", design_session.get("references")),
         _section("Last intent", str(design_session.get("last_intent") or "")),
+        _section(
+            "Intent confidence",
+            f"{design_session.get('intent_confidence'):.2f}"
+            if isinstance(design_session.get("intent_confidence"), (int, float))
+            else "",
+        ),
+        _section("Intent reason", design_session.get("intent_reason")),
+        _list_section("Intent signals", design_session.get("intent_signals")),
         _section("Pending question", design_session.get("pending_question")),
         _section("Review summary", design_session.get("review_summary")),
         _list_section("Recent revision trail", recent_revision_log),
@@ -164,6 +180,7 @@ def build_multi_turn_instruction_block(
 ## Multi-turn design agent instructions
 
 - Treat this request as one turn in a longer design conversation.
+- Route this turn using the provided intent metadata first; do not rely only on the literal user sentence.
 - Keep the current draft and prior revision trail in mind when making changes.
 - If the brief is too vague to design confidently, ask a concise clarifying question or render a polished question screen instead of guessing.
 - Preserve the existing structure unless the user explicitly asks for a broader redesign.

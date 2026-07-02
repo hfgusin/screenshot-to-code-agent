@@ -4,6 +4,7 @@ import {
   evaluateTargetedEdit,
   isRenderableHtmlDocument,
   parseDesignUpdateIntent,
+  routeUserTurn,
   runPreviewSelfCheck,
   summarizeReviewState,
   summarizeImageUpdateStatus,
@@ -43,6 +44,16 @@ describe("design-agent helpers", () => {
   });
 
   it("classifies update and question turns", () => {
+    const decision = routeUserTurn({
+      text: "把播放 前进 后退 调整到第一行居中",
+      generationType: "update",
+      selectedElementHtml: "<div class='controls'>...</div>",
+      currentCode: "<html></html>",
+    });
+    expect(decision.intent).toBe("modify");
+    expect(decision.confidence).toBeGreaterThan(0.8);
+    expect(decision.shouldAskQuestion).toBe(false);
+
     expect(
       classifyUserTurnIntent({
         text: "把播放 前进 后退 调整到第一行居中",
@@ -52,13 +63,13 @@ describe("design-agent helpers", () => {
       })
     ).toBe("modify");
 
-    expect(
-      classifyUserTurnIntent({
-        text: "为什么这个预览会失败？",
-        generationType: "update",
-        currentCode: "",
-      })
-    ).toBe("question");
+    const questionDecision = routeUserTurn({
+      text: "为什么这个预览会失败？",
+      generationType: "update",
+      currentCode: "",
+    });
+    expect(questionDecision.intent).toBe("question");
+    expect(questionDecision.shouldAskQuestion).toBe(true);
   });
 
   it("scores a centered targeted edit as a hit", () => {

@@ -21,6 +21,7 @@ class UserTurnInput(_UserTurnInputRequired, total=False):
     parent_commit_hash: str
     preview_self_check_enabled: bool
     turn_intent: "TurnIntent"
+    intent_decision: "IntentDecision"
     design_update_intent: "DesignUpdateIntent"
 
 
@@ -42,6 +43,10 @@ class DesignSession(TypedDict, total=False):
     references: str
     revision_log: List[str]
     last_intent: "TurnIntent"
+    intent_confidence: float
+    intent_reason: str
+    intent_signals: List[str]
+    intent_needs_clarification: bool
     pending_question: str
     review_summary: str
 
@@ -52,6 +57,15 @@ class DesignUpdateIntent(TypedDict):
     placement: str
     alignment: str
     preserve: List[str]
+
+
+class IntentDecision(TypedDict, total=False):
+    intent: "TurnIntent"
+    confidence: float
+    reason: str
+    should_ask_question: bool
+    signals: List[str]
+    structured_update_intent: DesignUpdateIntent
 
 
 TurnIntent = Literal["generate", "modify", "repair", "question"]

@@ -42,12 +42,25 @@ export interface DesignSession {
   references: string;
   revisionLog: string[];
   lastIntent?: TurnIntent;
+  intentConfidence?: number;
+  intentReason?: string;
+  intentSignals?: string[];
+  intentNeedsClarification?: boolean;
   pendingQuestion?: string;
   reviewSummary?: string;
   lastUpdatedAt: string | null;
 }
 
 export type TurnIntent = "generate" | "modify" | "repair" | "question";
+
+export interface IntentDecision {
+  intent: TurnIntent;
+  confidence: number;
+  reason: string;
+  shouldAskQuestion: boolean;
+  signals: string[];
+  structuredUpdateIntent?: DesignUpdateIntent;
+}
 
 export interface DesignUpdateIntent {
   target: string;
@@ -130,6 +143,7 @@ export interface PromptContent {
   parentCommitHash?: string | null;
   previewSelfCheckEnabled?: boolean;
   turnIntent?: TurnIntent;
+  intentDecision?: IntentDecision;
   designUpdateIntent?: DesignUpdateIntent;
   designSessionSnapshot?: DesignSession;
   runId?: string;
@@ -154,6 +168,7 @@ export interface CodeGenerationParams {
   parentCommitHash?: string | null;
   previewSelfCheckEnabled?: boolean;
   turnIntent?: TurnIntent;
+  intentDecision?: IntentDecision;
   history?: PromptHistoryMessage[];
   designSession?: DesignSession;
   fileState?: {

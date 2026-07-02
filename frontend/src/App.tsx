@@ -32,9 +32,9 @@ import {
 } from "./components/select-and-edit/utils";
 import {
   classifyGenerationFailure,
-  classifyUserTurnIntent,
   evaluateTargetedEdit,
   parseDesignUpdateIntent,
+  routeUserTurn,
   runPreviewSelfCheck,
   summarizeReviewState,
   summarizeImageUpdateStatus,
@@ -65,7 +65,16 @@ function buildSeededDesignSession(
   promptText: string,
   existingSession?: DesignSession,
   extras?: Partial<
-    Pick<DesignSession, "lastIntent" | "pendingQuestion" | "reviewSummary">
+    Pick<
+      DesignSession,
+      | "lastIntent"
+      | "intentConfidence"
+      | "intentReason"
+      | "intentSignals"
+      | "intentNeedsClarification"
+      | "pendingQuestion"
+      | "reviewSummary"
+    >
   >
 ): DesignSession {
   const trimmedPrompt = promptText.trim();
@@ -77,6 +86,14 @@ function buildSeededDesignSession(
     references: existingSession?.references ?? "",
     revisionLog: existingSession?.revisionLog ?? [],
     lastIntent: extras?.lastIntent ?? existingSession?.lastIntent ?? "generate",
+    intentConfidence:
+      extras?.intentConfidence ?? existingSession?.intentConfidence ?? undefined,
+    intentReason: extras?.intentReason ?? existingSession?.intentReason ?? "",
+    intentSignals: extras?.intentSignals ?? existingSession?.intentSignals ?? [],
+    intentNeedsClarification:
+      extras?.intentNeedsClarification ??
+      existingSession?.intentNeedsClarification ??
+      false,
     pendingQuestion:
       extras?.pendingQuestion ?? existingSession?.pendingQuestion ?? "",
     reviewSummary: extras?.reviewSummary ?? existingSession?.reviewSummary ?? "",
@@ -558,15 +575,16 @@ function App() {
       : undefined;
     const activeDraftCode =
       activeCommit?.variants[activeCommit.selectedVariantIndex]?.code || "";
-    const turnIntent =
-      requestParams.prompt.turnIntent ??
-      requestParams.turnIntent ??
-      classifyUserTurnIntent({
+    const intentDecision =
+      requestParams.intentDecision ??
+      requestParams.prompt.intentDecision ??
+      routeUserTurn({
         text: requestParams.prompt.fullText || requestParams.prompt.text,
         generationType: requestParams.generationType,
         selectedElementHtml: requestParams.prompt.selectedElementHtml,
         currentCode: requestParams.generationType === "update" ? activeDraftCode : "",
       });
+    const turnIntent = intentDecision.intent;
     const parentCommitHash =
       requestParams.generationType === "create" ? null : head;
     const requestDesignSession =
@@ -585,6 +603,7 @@ function App() {
       parentCommitHash,
       previewSelfCheckEnabled: true,
       turnIntent,
+      intentDecision,
       ...settings,
       designSystem: selectedDesignSystem?.content ?? null,
       designSession: requestDesignSession,
@@ -597,6 +616,7 @@ function App() {
       parentCommitHash,
       previewSelfCheckEnabled: true,
       turnIntent,
+      intentDecision,
       designSessionSnapshot: requestDesignSession,
     };
     // Mirror the backend's default variant counts to avoid UI flashes while
@@ -764,8 +784,12 @@ function App() {
         setDesignSession((prev) => ({
           ...prev,
           lastIntent: turnIntent,
+          intentConfidence: intentDecision.confidence,
+          intentReason: intentDecision.reason,
+          intentSignals: intentDecision.signals,
+          intentNeedsClarification: intentDecision.shouldAskQuestion,
           pendingQuestion:
-            turnIntent === "question"
+            intentDecision.shouldAskQuestion
               ? (requestParams.prompt.fullText ||
                   requestParams.prompt.text ||
                   "").trim()
@@ -934,6 +958,10 @@ function App() {
           ...prev,
           goal: prev.goal.trim() || requestParams.prompt.text.trim() || prev.goal,
           lastIntent: turnIntent,
+          intentConfidence: intentDecision.confidence,
+          intentReason: intentDecision.reason,
+          intentSignals: intentDecision.signals,
+          intentNeedsClarification: intentDecision.shouldAskQuestion,
           lastUpdatedAt: new Date().toISOString(),
         }));
         setAppState(AppState.CODE_READY);
@@ -954,11 +982,12 @@ function App() {
     setReferenceImages(referenceImages);
     setInputMode(inputMode);
 
-    const turnIntent = classifyUserTurnIntent({
+    const intentDecision = routeUserTurn({
       text: textPrompt,
       generationType: "create",
       currentCode: "",
     });
+    const turnIntent = intentDecision.intent;
 
     const seededDesignSession = appendRevisionEntry(
       buildSeededDesignSession(textPrompt, {
@@ -966,6 +995,10 @@ function App() {
       goal: textPrompt.trim() || "Create a polished UI from the provided references.",
       }, {
         lastIntent: turnIntent,
+        intentConfidence: intentDecision.confidence,
+        intentReason: intentDecision.reason,
+        intentSignals: intentDecision.signals,
+        intentNeedsClarification: intentDecision.shouldAskQuestion,
         pendingQuestion: turnIntent === "question" ? textPrompt.trim() : "",
       }),
       summarizeDesignRevision("create", textPrompt)
@@ -1013,12 +1046,14 @@ function App() {
           previewSelfCheckEnabled: true,
           designSessionSnapshot: seededDesignSession,
           turnIntent,
+          intentDecision,
         },
         revisionId,
         parentCommitHash: null,
         previewSelfCheckEnabled: true,
         designSession: seededDesignSession,
         turnIntent,
+        intentDecision,
         variantHistory,
       });
     }
@@ -1030,17 +1065,22 @@ function App() {
 
     setInputMode("text");
     setInitialPrompt(text);
-    const turnIntent = classifyUserTurnIntent({
+    const intentDecision = routeUserTurn({
       text,
       generationType: "create",
       currentCode: "",
     });
+    const turnIntent = intentDecision.intent;
     const seededDesignSession = appendRevisionEntry(
       buildSeededDesignSession(text, {
       ...createEmptyDesignSession(),
       goal: text.trim() || "Create a polished UI from the provided brief.",
       }, {
         lastIntent: turnIntent,
+        intentConfidence: intentDecision.confidence,
+        intentReason: intentDecision.reason,
+        intentSignals: intentDecision.signals,
+        intentNeedsClarification: intentDecision.shouldAskQuestion,
         pendingQuestion: turnIntent === "question" ? text.trim() : "",
       }),
       summarizeDesignRevision("create", text)
@@ -1060,12 +1100,14 @@ function App() {
         previewSelfCheckEnabled: true,
         designSessionSnapshot: seededDesignSession,
         turnIntent,
+        intentDecision,
       },
       revisionId,
       parentCommitHash: null,
       previewSelfCheckEnabled: true,
       designSession: seededDesignSession,
       turnIntent,
+      intentDecision,
       variantHistory: [buildUserHistoryMessage(text)],
     });
   }
@@ -1129,12 +1171,13 @@ function App() {
     const updatedHistory = shouldBootstrapFromFileState
       ? []
       : toRequestHistory(updatedVariantHistory, getAssetsById);
-    const turnIntent = classifyUserTurnIntent({
+    const intentDecision = routeUserTurn({
       text: updateInstruction,
       generationType: "update",
       selectedElementHtml,
       currentCode,
     });
+    const turnIntent = intentDecision.intent;
     const seededUpdateSession = appendRevisionEntry(
       {
         ...designSession,
@@ -1144,8 +1187,14 @@ function App() {
           modifiedUpdateInstruction.trim() ||
           designSession.goal,
         lastIntent: turnIntent,
+        intentConfidence: intentDecision.confidence,
+        intentReason: intentDecision.reason,
+        intentSignals: intentDecision.signals,
+        intentNeedsClarification: intentDecision.shouldAskQuestion,
         pendingQuestion:
-          turnIntent === "question" ? modifiedUpdateInstruction.trim() : "",
+          intentDecision.shouldAskQuestion
+            ? modifiedUpdateInstruction.trim()
+            : "",
       },
       summarizeDesignRevision("update", modifiedUpdateInstruction)
     );
@@ -1173,12 +1222,14 @@ function App() {
         previewSelfCheckEnabled: true,
         designSessionSnapshot: seededUpdateSession,
         turnIntent,
+        intentDecision,
       },
       revisionId,
       parentCommitHash: head,
       previewSelfCheckEnabled: true,
       designSession: seededUpdateSession,
       turnIntent,
+      intentDecision,
       history: updatedHistory,
       optionCodes,
       variantHistory: updatedVariantHistory,

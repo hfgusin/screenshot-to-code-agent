@@ -146,6 +146,13 @@ class TestCreatePrompt:
                 "videos": [],
                 "workspace_id": "workspace-123",
                 "turn_intent": "modify",
+                "intent_decision": {
+                    "intent": "modify",
+                    "confidence": 0.9,
+                    "reason": "Selected element indicates a localized edit.",
+                    "should_ask_question": False,
+                    "signals": ["selection", "modify"],
+                },
             },
             history=[
                 {
@@ -168,6 +175,9 @@ class TestCreatePrompt:
                 "references": "https://example.com/dashboard",
                 "revision_log": ["Create: initial dashboard"],
                 "last_intent": "generate",
+                "intent_confidence": 0.84,
+                "intent_reason": "Create mode defaults to a fresh draft.",
+                "intent_signals": ["create"],
                 "review_summary": "intent=generate; preview=pass",
             },
             image_generation_enabled=True,
@@ -185,6 +195,7 @@ class TestCreatePrompt:
         assert "Current session goal:" in user_content
         assert "Current turn:" in user_content
         assert "Turn intent: modify" in user_content
+        assert "Intent confidence: 0.90" in user_content
 
     @pytest.mark.asyncio
     async def test_update_prompt_highlights_image_assets_from_history(

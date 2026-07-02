@@ -72,11 +72,19 @@ async def test_extracts_turn_intent_and_design_session_fields() -> None:
             "prompt": {
                 "text": "Fix the layout",
                 "turnIntent": "repair",
+                "intentDecision": {
+                    "intent": "repair",
+                    "confidence": 0.91,
+                    "reason": "Repair keywords were detected.",
+                    "shouldAskQuestion": False,
+                    "signals": ["repair", "draft"],
+                },
             },
         }
     )
 
     assert extracted.prompt["turn_intent"] == "repair"
+    assert extracted.prompt["intent_decision"]["intent"] == "repair"
     assert extracted.design_session["last_intent"] == "modify"
     assert extracted.design_session["pending_question"] == "Which section should change?"
     assert extracted.design_session["review_summary"] == "intent=modify; preview=pass"

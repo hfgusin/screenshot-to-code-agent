@@ -15,7 +15,7 @@ from prompts.image_assets import (
 )
 from prompts.design_system import build_design_system_prompt_block
 from prompts.policies import build_selected_stack_policy, build_user_image_policy
-from prompts.prompt_types import DesignSession, Stack, UserTurnInput
+from prompts.prompt_types import DesignSession, IntentDecision, Stack, UserTurnInput
 from prompts.message_builder import Prompt, build_history_message
 
 MAX_FILE_STATE_CHARS = 12000
@@ -43,6 +43,7 @@ def build_update_prompt_from_file_snapshot(
     image_generation_enabled: bool,
     design_session: DesignSession | None = None,
     design_system: str | None = None,
+    intent_decision: IntentDecision | None = None,
 ) -> Prompt:
     path = file_state.get("path", "index.html")
     # full_text carries the complete model-facing instruction (e.g. with the
@@ -71,6 +72,7 @@ def build_update_prompt_from_file_snapshot(
         selected_element_context=prompt.get("selected_element_context"),
         preview_self_check_enabled=prompt.get("preview_self_check_enabled"),
         turn_intent=prompt.get("turn_intent"),
+        intent_decision=intent_decision or prompt.get("intent_decision"),
     )
     design_update_intent_block = build_design_update_intent_block(
         prompt.get("design_update_intent")

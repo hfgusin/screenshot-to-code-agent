@@ -3,6 +3,7 @@ from typing import List, cast
 from prompts.prompt_types import (
     DesignSession,
     DesignUpdateIntent,
+    IntentDecision,
     PromptHistoryMessage,
     TurnIntent,
     UserTurnInput,
@@ -64,6 +65,10 @@ def parse_prompt_content(raw_prompt: object) -> UserTurnInput:
     if isinstance(turn_intent, str) and turn_intent.strip():
         parsed["turn_intent"] = cast(TurnIntent, turn_intent.strip())
 
+    intent_decision = _parse_intent_decision(prompt_dict.get("intentDecision"))
+    if intent_decision:
+        parsed["intent_decision"] = intent_decision
+
     design_update_intent = _parse_design_update_intent(
         prompt_dict.get("designUpdateIntent")
     )
@@ -97,6 +102,41 @@ def _parse_design_update_intent(raw_intent: object) -> DesignUpdateIntent | None
         "alignment": cast(str, alignment).strip(),
         "preserve": [item.strip() for item in preserve if item.strip()],
     }
+
+
+def _parse_intent_decision(raw_decision: object) -> IntentDecision | None:
+    if not isinstance(raw_decision, dict):
+        return None
+
+    decision_dict = cast(dict[str, object], raw_decision)
+    intent = decision_dict.get("intent")
+    confidence = decision_dict.get("confidence")
+    reason = decision_dict.get("reason")
+    should_ask_question = decision_dict.get("shouldAskQuestion")
+    signals = _to_string_list(decision_dict.get("signals"))
+    structured_update_intent = _parse_design_update_intent(
+        decision_dict.get("structuredUpdateIntent")
+    )
+
+    if not isinstance(intent, str) or not intent.strip():
+        return None
+    if not isinstance(confidence, (int, float)):
+        confidence = 0
+    if not isinstance(reason, str):
+        reason = ""
+    if not isinstance(should_ask_question, bool):
+        should_ask_question = False
+
+    parsed: IntentDecision = {
+        "intent": cast(TurnIntent, intent.strip()),
+        "confidence": float(confidence),
+        "reason": reason.strip(),
+        "should_ask_question": should_ask_question,
+        "signals": [item.strip() for item in signals if item.strip()],
+    }
+    if structured_update_intent:
+        parsed["structured_update_intent"] = structured_update_intent
+    return parsed
 
 
 def parse_prompt_history(raw_history: object) -> List[PromptHistoryMessage]:
@@ -141,12 +181,26 @@ def parse_design_session(raw_session: object) -> DesignSession:
 
     for key, field_name in (
         ("lastIntent", "last_intent"),
+        ("intentConfidence", "intent_confidence"),
+        ("intentReason", "intent_reason"),
+        ("intentSignals", "intent_signals"),
+        ("intentNeedsClarification", "intent_needs_clarification"),
         ("pendingQuestion", "pending_question"),
         ("reviewSummary", "review_summary"),
     ):
         value = session_dict.get(key)
         if isinstance(value, str) and value.strip():
             parsed[field_name] = value.strip()
+        elif field_name == "intent_confidence" and isinstance(value, (int, float)):
+            parsed[field_name] = float(value)
+        elif field_name == "intent_signals" and isinstance(value, list):
+            parsed[field_name] = [
+                item.strip()
+                for item in cast(List[object], value)
+                if isinstance(item, str) and item.strip()
+            ]
+        elif field_name == "intent_needs_clarification" and isinstance(value, bool):
+            parsed[field_name] = value
 
     revision_log = session_dict.get("revision_log")
     if isinstance(revision_log, list):

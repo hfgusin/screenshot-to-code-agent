@@ -15,7 +15,13 @@ from prompts.image_assets import (
 )
 from prompts.design_system import build_design_system_prompt_block
 from prompts.policies import build_selected_stack_policy, build_user_image_policy
-from prompts.prompt_types import DesignSession, PromptHistoryMessage, Stack, UserTurnInput
+from prompts.prompt_types import (
+    DesignSession,
+    IntentDecision,
+    PromptHistoryMessage,
+    Stack,
+    UserTurnInput,
+)
 from prompts.message_builder import Prompt, build_history_message
 
 MAX_PROMPT_HISTORY_MESSAGES = 6
@@ -46,6 +52,7 @@ def build_update_prompt_from_history(
     prompt: UserTurnInput | None = None,
     design_session: DesignSession | None = None,
     design_system: str | None = None,
+    intent_decision: IntentDecision | None = None,
 ) -> Prompt:
     first_user_index = next(
         (index for index, item in enumerate(history) if item["role"] == "user"),
@@ -96,6 +103,7 @@ def build_update_prompt_from_history(
         selected_element_context=(prompt or {}).get("selected_element_context"),
         preview_self_check_enabled=(prompt or {}).get("preview_self_check_enabled"),
         turn_intent=(prompt or {}).get("turn_intent"),
+        intent_decision=intent_decision or (prompt or {}).get("intent_decision"),
     )
     design_update_intent_block = build_design_update_intent_block(
         (prompt or {}).get("design_update_intent")

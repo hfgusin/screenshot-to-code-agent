@@ -2,6 +2,7 @@ import {
   AgentImageUpdateStatus,
   AgentTargetingDiagnostics,
   DesignUpdateIntent,
+  IntentDecision,
   PreviewSelfCheckResult,
   TurnIntent,
 } from "../types";
@@ -61,47 +62,140 @@ function hasAnyMatch(value: string, patterns: RegExp[]): boolean {
   return patterns.some((pattern) => pattern.test(value));
 }
 
+function extractTagName(html: string): string | null {
+  const match = html.trim().match(/^<\s*([a-z0-9-]+)/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+function collectMatchedSignals(params: {
+  text: string;
+  selectedElementHtml?: string | null;
+  currentCode?: string;
+}): string[] {
+  const signals: string[] = [];
+  const text = params.text.trim();
+  if (hasAnyMatch(text, QUESTION_KEYWORDS)) signals.push("question");
+  if (hasAnyMatch(text, REPAIR_KEYWORDS)) signals.push("repair");
+  if (hasAnyMatch(text, MODIFY_KEYWORDS)) signals.push("modify");
+  if (hasAnyMatch(text, CREATE_KEYWORDS)) signals.push("create");
+  if (params.selectedElementHtml?.trim()) signals.push("selection");
+  if (params.currentCode?.trim()) signals.push("draft");
+  return signals;
+}
+
+function buildStructuredUpdateIntent(params: {
+  text: string;
+  selectedElementHtml?: string | null;
+  generationType: "create" | "update";
+}): DesignUpdateIntent | undefined {
+  if (params.generationType !== "update" && !params.selectedElementHtml?.trim()) {
+    return undefined;
+  }
+  return parseDesignUpdateIntent(
+    params.text,
+    params.selectedElementHtml ? extractTagName(params.selectedElementHtml) : null
+  );
+}
+
+export function routeUserTurn(params: {
+  text: string;
+  generationType: "create" | "update";
+  selectedElementHtml?: string | null;
+  currentCode?: string;
+}): IntentDecision {
+  const text = params.text.trim();
+  const hasSelection = Boolean(params.selectedElementHtml?.trim());
+  const hasExistingDraft = Boolean(params.currentCode?.trim());
+  const signals = collectMatchedSignals(params);
+  const structuredUpdateIntent = buildStructuredUpdateIntent(params);
+  let intent: TurnIntent = params.generationType === "create" ? "generate" : "modify";
+  let confidence = 0.5;
+  let reason = "Default router fallback.";
+  let shouldAskQuestion = false;
+
+  if (!text && params.generationType === "update") {
+    intent = "modify";
+    confidence = 0.82;
+    reason = "Empty update text with an existing draft usually means a localized edit.";
+  } else if (
+    !hasExistingDraft &&
+    params.generationType === "update" &&
+    hasAnyMatch(text, QUESTION_KEYWORDS)
+  ) {
+    intent = "question";
+    confidence = 0.88;
+    reason = "The request looks like a clarification without an active draft.";
+    shouldAskQuestion = true;
+  } else if (hasAnyMatch(text, REPAIR_KEYWORDS)) {
+    intent = "repair";
+    confidence = 0.9;
+    reason = "Repair keywords were detected.";
+  } else if (
+    hasSelection &&
+    (params.generationType === "update" || hasAnyMatch(text, MODIFY_KEYWORDS))
+  ) {
+    intent = "modify";
+    confidence = 0.92;
+    reason = "A selected element strongly indicates a localized update.";
+  } else if (hasAnyMatch(text, QUESTION_KEYWORDS) && !hasAnyMatch(text, MODIFY_KEYWORDS)) {
+    intent =
+      params.generationType === "create" && hasAnyMatch(text, CREATE_KEYWORDS)
+        ? "generate"
+        : "question";
+    confidence = intent === "generate" ? 0.64 : 0.72;
+    reason =
+      intent === "generate"
+        ? "The text contains a question mark but also a clear create intent."
+        : "The text looks like a clarification request.";
+    shouldAskQuestion = intent === "question";
+  } else if (params.generationType === "create") {
+    intent = "generate";
+    confidence = 0.84;
+    reason = "Create mode defaults to a fresh draft.";
+  } else if (hasAnyMatch(text, MODIFY_KEYWORDS)) {
+    intent = "modify";
+    confidence = 0.76;
+    reason = "Modification keywords were detected.";
+  } else if (hasAnyMatch(text, CREATE_KEYWORDS)) {
+    intent = "generate";
+    confidence = 0.7;
+    reason = "Create keywords were detected.";
+  } else {
+    intent = params.generationType === "update" ? "modify" : "generate";
+    confidence = 0.58;
+    reason = "No strong routing signal was found, so the router used the default path.";
+    shouldAskQuestion = params.generationType === "update" && !hasSelection && text.length < 24;
+  }
+
+  if (params.generationType === "update" && !hasSelection && intent === "modify") {
+    confidence = Math.min(confidence, 0.68);
+    if (text.length < 16) {
+      shouldAskQuestion = true;
+      reason = "The update is short and ungrounded, so the router is asking for clarification.";
+    }
+  }
+
+  if (intent === "question") {
+    shouldAskQuestion = true;
+  }
+
+  return {
+    intent,
+    confidence: Number(confidence.toFixed(2)),
+    reason,
+    shouldAskQuestion,
+    signals,
+    structuredUpdateIntent,
+  };
+}
+
 export function classifyUserTurnIntent(params: {
   text: string;
   generationType: "create" | "update";
   selectedElementHtml?: string | null;
   currentCode?: string;
 }): TurnIntent {
-  const text = params.text.trim();
-  const hasSelection = Boolean(params.selectedElementHtml?.trim());
-  const hasExistingDraft = Boolean(params.currentCode?.trim());
-
-  if (!text && params.generationType === "update") {
-    return "modify";
-  }
-
-  if (!hasExistingDraft && params.generationType === "update" && hasAnyMatch(text, QUESTION_KEYWORDS)) {
-    return "question";
-  }
-
-  if (hasAnyMatch(text, REPAIR_KEYWORDS)) {
-    return "repair";
-  }
-
-  if (
-    hasSelection &&
-    (params.generationType === "update" || hasAnyMatch(text, MODIFY_KEYWORDS))
-  ) {
-    return "modify";
-  }
-
-  if (hasAnyMatch(text, QUESTION_KEYWORDS) && !hasAnyMatch(text, MODIFY_KEYWORDS)) {
-    if (params.generationType === "create" && hasAnyMatch(text, CREATE_KEYWORDS)) {
-      return "generate";
-    }
-    return "question";
-  }
-
-  if (params.generationType === "create") {
-    return "generate";
-  }
-
-  return hasAnyMatch(text, MODIFY_KEYWORDS) ? "modify" : "generate";
+  return routeUserTurn(params).intent;
 }
 
 export function summarizeReviewState(params: {

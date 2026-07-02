@@ -43,6 +43,7 @@ async def build_prompt_messages(
             prompt=prompt,
             design_session=design_session,
             design_system=design_system,
+            intent_decision=prompt.get("intent_decision"),
         )
     if strategy == "update_from_file_snapshot":
         assert file_state is not None
@@ -53,6 +54,7 @@ async def build_prompt_messages(
             image_generation_enabled=image_generation_enabled,
             design_session=design_session,
             design_system=design_system,
+            intent_decision=prompt.get("intent_decision"),
         )
     return build_create_prompt_from_input(
         input_mode,
@@ -61,4 +63,5 @@ async def build_prompt_messages(
         image_generation_enabled,
         design_session=design_session,
         design_system=design_system,
+        intent_decision=prompt.get("intent_decision"),
     )
