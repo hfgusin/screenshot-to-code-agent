@@ -145,6 +145,7 @@ class TestCreatePrompt:
                 "images": [],
                 "videos": [],
                 "workspace_id": "workspace-123",
+                "turn_intent": "modify",
             },
             history=[
                 {
@@ -166,6 +167,8 @@ class TestCreatePrompt:
                 "constraints": "Keep the existing top nav",
                 "references": "https://example.com/dashboard",
                 "revision_log": ["Create: initial dashboard"],
+                "last_intent": "generate",
+                "review_summary": "intent=generate; preview=pass",
             },
             image_generation_enabled=True,
         )
@@ -181,6 +184,7 @@ class TestCreatePrompt:
         assert "Create a polished product dashboard" in user_content
         assert "Current session goal:" in user_content
         assert "Current turn:" in user_content
+        assert "Turn intent: modify" in user_content
 
     @pytest.mark.asyncio
     async def test_update_prompt_highlights_image_assets_from_history(

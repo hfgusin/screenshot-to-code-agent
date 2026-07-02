@@ -29,6 +29,7 @@ def build_revision_metadata_block(
     parent_commit_hash: str | None = None,
     selected_element_context: str | None = None,
     preview_self_check_enabled: bool | None = None,
+    turn_intent: str | None = None,
 ) -> str:
     lines: list[str] = []
     if workspace_id and workspace_id.strip():
@@ -43,6 +44,8 @@ def build_revision_metadata_block(
     if preview_self_check_enabled is not None:
         state = "enabled" if preview_self_check_enabled else "disabled"
         lines.append(f"- Preview self-check: {state}")
+    if turn_intent and turn_intent.strip():
+        lines.append(f"- Turn intent: {turn_intent.strip()}")
     if not lines:
         return ""
     return "\n".join(["## Revision metadata", *lines])
@@ -85,6 +88,9 @@ def build_design_session_prompt_block(
         _section("Constraints", design_session.get("constraints")),
         _section("Style direction", design_session.get("style")),
         _section("References", design_session.get("references")),
+        _section("Last intent", str(design_session.get("last_intent") or "")),
+        _section("Pending question", design_session.get("pending_question")),
+        _section("Review summary", design_session.get("review_summary")),
         _list_section("Recent revision trail", recent_revision_log),
     ]
     if omitted_revision_count > 0:
@@ -127,6 +133,7 @@ def build_design_session_prompt_block(
 def build_multi_turn_instruction_block(
     prompt_text: str,
     design_session: DesignSession | None = None,
+    turn_intent: str | None = None,
 ) -> str:
     if not design_session:
         return ""
@@ -140,6 +147,18 @@ def build_multi_turn_instruction_block(
     session_style = (design_session or {}).get("style", "").strip()
     revision_log = (design_session or {}).get("revision_log") or []
     revision_phase = len(revision_log) + 1
+    intent = (turn_intent or "").strip()
+    if not intent:
+        intent = str((design_session or {}).get("last_intent") or "").strip()
+    if not intent:
+        intent = "generate"
+
+    intent_guidance = {
+        "generate": "This turn is a fresh generation. Produce a strong base draft and keep it renderable.",
+        "modify": "This turn is a localized modification. Change only the requested area and preserve the rest.",
+        "repair": "This turn is a repair. Focus on the broken or failed part and do not redesign unrelated sections.",
+        "question": "This turn is a clarification turn. Ask one concise question or render a polished clarification screen instead of guessing.",
+    }.get(intent, "Preserve the current draft and make the smallest useful delta.")
 
     return f"""
 ## Multi-turn design agent instructions
@@ -152,6 +171,8 @@ def build_multi_turn_instruction_block(
 - This is revision phase {revision_phase}. If it is greater than 1, make a visible delta from the previous draft rather than returning a near-identical layout.
 - Ensure the new draft has at least one obvious improvement the user can immediately notice.
 - Include a short self-check in the generated UI: verify layout balance, spacing, and whether the requested change is actually reflected.
+- Current turn intent: {intent}
+- {intent_guidance}
 
 Current turn:
 {prompt_text}

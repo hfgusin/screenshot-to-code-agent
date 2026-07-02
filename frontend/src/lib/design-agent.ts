@@ -3,6 +3,7 @@ import {
   AgentTargetingDiagnostics,
   DesignUpdateIntent,
   PreviewSelfCheckResult,
+  TurnIntent,
 } from "../types";
 
 const LAYOUT_KEYWORDS: Array<[RegExp, Partial<DesignUpdateIntent>]> = [
@@ -36,6 +37,99 @@ const TARGET_KEYWORDS: Array<[RegExp, string]> = [
   [/(表格|table)/i, "table"],
   [/(图表|chart|graph)/i, "chart block"],
 ];
+
+const QUESTION_KEYWORDS = [
+  /(\?|？)/,
+  /(怎么|如何|为什么|能不能|可不可以|是不是|what|why|how|should|could|can you)/i,
+];
+
+const REPAIR_KEYWORDS = [
+  /(修复|修一下|修正|报错|错误|失败|坏了|崩了|bug|fix|restore|恢复)/i,
+  /(preview|预览).*(空白|失败|报错|不显示)/i,
+];
+
+const MODIFY_KEYWORDS = [
+  /(改|调整|修改|优化|重排|替换|保留|居中|移动|缩小|放大|换成|不要|别动)/i,
+  /(update|modify|refine|reposition|restyle|align|center)/i,
+];
+
+const CREATE_KEYWORDS = [
+  /(做|生成|创建|设计|画|build|create|make|generate|design)/i,
+];
+
+function hasAnyMatch(value: string, patterns: RegExp[]): boolean {
+  return patterns.some((pattern) => pattern.test(value));
+}
+
+export function classifyUserTurnIntent(params: {
+  text: string;
+  generationType: "create" | "update";
+  selectedElementHtml?: string | null;
+  currentCode?: string;
+}): TurnIntent {
+  const text = params.text.trim();
+  const hasSelection = Boolean(params.selectedElementHtml?.trim());
+  const hasExistingDraft = Boolean(params.currentCode?.trim());
+
+  if (!text && params.generationType === "update") {
+    return "modify";
+  }
+
+  if (!hasExistingDraft && params.generationType === "update" && hasAnyMatch(text, QUESTION_KEYWORDS)) {
+    return "question";
+  }
+
+  if (hasAnyMatch(text, REPAIR_KEYWORDS)) {
+    return "repair";
+  }
+
+  if (
+    hasSelection &&
+    (params.generationType === "update" || hasAnyMatch(text, MODIFY_KEYWORDS))
+  ) {
+    return "modify";
+  }
+
+  if (hasAnyMatch(text, QUESTION_KEYWORDS) && !hasAnyMatch(text, MODIFY_KEYWORDS)) {
+    if (params.generationType === "create" && hasAnyMatch(text, CREATE_KEYWORDS)) {
+      return "generate";
+    }
+    return "question";
+  }
+
+  if (params.generationType === "create") {
+    return "generate";
+  }
+
+  return hasAnyMatch(text, MODIFY_KEYWORDS) ? "modify" : "generate";
+}
+
+export function summarizeReviewState(params: {
+  turnIntent: TurnIntent;
+  selfCheck: PreviewSelfCheckResult;
+  targeting?: AgentTargetingDiagnostics;
+  imageUpdateStatus?: AgentImageUpdateStatus | null;
+}): string {
+  const intentLabel = params.turnIntent;
+  const previewLabel = `${params.selfCheck.status}: ${params.selfCheck.summary}`;
+  const targetLabel = params.targeting
+    ? params.targeting.collateralDamage
+      ? `target=${params.targeting.targetSummary || "selected area"}; hit=partial`
+      : `target=${params.targeting.targetSummary || "selected area"}; hit=${
+          params.targeting.intentMatched ? "yes" : "no"
+        }`
+    : "target=n/a";
+  const imageLabel = params.imageUpdateStatus
+    ? `image=${params.imageUpdateStatus.operation}/${params.imageUpdateStatus.status}`
+    : "image=n/a";
+
+  return [
+    `intent=${intentLabel}`,
+    `preview=${previewLabel}`,
+    targetLabel,
+    imageLabel,
+  ].join("; ");
+}
 
 function normalizePreserveClauses(instruction: string): string[] {
   const clauses = instruction

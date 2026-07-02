@@ -20,6 +20,7 @@ class UserTurnInput(_UserTurnInputRequired, total=False):
     run_id: str
     parent_commit_hash: str
     preview_self_check_enabled: bool
+    turn_intent: "TurnIntent"
     design_update_intent: "DesignUpdateIntent"
 
 
@@ -40,6 +41,9 @@ class DesignSession(TypedDict, total=False):
     style: str
     references: str
     revision_log: List[str]
+    last_intent: "TurnIntent"
+    pending_question: str
+    review_summary: str
 
 
 class DesignUpdateIntent(TypedDict):
@@ -48,6 +52,9 @@ class DesignUpdateIntent(TypedDict):
     placement: str
     alignment: str
     preserve: List[str]
+
+
+TurnIntent = Literal["generate", "modify", "repair", "question"]
 
 
 PromptConstructionStrategy = Literal[

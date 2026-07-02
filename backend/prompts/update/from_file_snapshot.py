@@ -70,6 +70,7 @@ def build_update_prompt_from_file_snapshot(
         parent_commit_hash=prompt.get("parent_commit_hash"),
         selected_element_context=prompt.get("selected_element_context"),
         preview_self_check_enabled=prompt.get("preview_self_check_enabled"),
+        turn_intent=prompt.get("turn_intent"),
     )
     design_update_intent_block = build_design_update_intent_block(
         prompt.get("design_update_intent")
@@ -77,6 +78,7 @@ def build_update_prompt_from_file_snapshot(
     multi_turn_block = build_multi_turn_instruction_block(
         prompt.get("full_text", "") or prompt.get("text", ""),
         design_session,
+        turn_intent=prompt.get("turn_intent"),
     )
     prompt_parts = [
         part

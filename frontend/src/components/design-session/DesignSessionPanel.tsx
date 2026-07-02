@@ -111,6 +111,43 @@ function DesignSessionPanel({
         />
       </div>
 
+      {(designSession.lastIntent ||
+        designSession.pendingQuestion ||
+        designSession.reviewSummary) && (
+        <div className="mt-4 grid gap-2">
+          {designSession.lastIntent && (
+            <div className="rounded-xl border border-violet-200/80 bg-violet-50/70 px-3 py-2 text-xs dark:border-violet-900/50 dark:bg-violet-950/20">
+              <div className="mb-1 font-semibold uppercase tracking-wider text-violet-700 dark:text-violet-300">
+                Last intent
+              </div>
+              <div className="text-violet-900 dark:text-violet-100">
+                {designSession.lastIntent}
+              </div>
+            </div>
+          )}
+          {designSession.pendingQuestion && (
+            <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-2 text-xs dark:border-amber-900/50 dark:bg-amber-950/20">
+              <div className="mb-1 font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300">
+                Pending question
+              </div>
+              <div className="text-amber-900 dark:text-amber-100">
+                {designSession.pendingQuestion}
+              </div>
+            </div>
+          )}
+          {designSession.reviewSummary && (
+            <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/70 px-3 py-2 text-xs dark:border-emerald-900/50 dark:bg-emerald-950/20">
+              <div className="mb-1 font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+                Review summary
+              </div>
+              <div className="text-emerald-900 dark:text-emerald-100">
+                {designSession.reviewSummary}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {!!designSession.revisionLog.length && (
         <div className="mt-4">
           <div className="mb-2 flex items-center justify-between">

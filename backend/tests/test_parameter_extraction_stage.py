@@ -53,3 +53,30 @@ async def test_extracts_design_system_from_request() -> None:
     )
 
     assert extracted.design_system == "Reuse .mockup-frame"
+
+
+@pytest.mark.asyncio
+async def test_extracts_turn_intent_and_design_session_fields() -> None:
+    stage = ParameterExtractionStage(AsyncMock())
+
+    extracted = await stage.extract_and_validate(
+        {
+            "generatedCodeConfig": "html_css",
+            "inputMode": "text",
+            "designSession": {
+                "goal": "Keep the same structure",
+                "lastIntent": "modify",
+                "pendingQuestion": "Which section should change?",
+                "reviewSummary": "intent=modify; preview=pass",
+            },
+            "prompt": {
+                "text": "Fix the layout",
+                "turnIntent": "repair",
+            },
+        }
+    )
+
+    assert extracted.prompt["turn_intent"] == "repair"
+    assert extracted.design_session["last_intent"] == "modify"
+    assert extracted.design_session["pending_question"] == "Which section should change?"
+    assert extracted.design_session["review_summary"] == "intent=modify; preview=pass"

@@ -26,6 +26,7 @@ def build_create_prompt_from_input(
             design_session=design_session,
             design_system=design_system,
             workspace_id=workspace_id,
+            turn_intent=prompt.get("turn_intent"),
         )
     if input_mode == "text":
         return build_text_prompt_messages(
@@ -35,6 +36,7 @@ def build_create_prompt_from_input(
             design_session=design_session,
             design_system=design_system,
             workspace_id=workspace_id,
+            turn_intent=prompt.get("turn_intent"),
         )
     if input_mode == "video":
         video_urls = prompt.get("videos", [])
@@ -49,6 +51,7 @@ def build_create_prompt_from_input(
             design_session=design_session,
             design_system=design_system,
             workspace_id=workspace_id,
+            turn_intent=prompt.get("turn_intent"),
         )
     raise ValueError(f"Unsupported input mode: {input_mode}")
 

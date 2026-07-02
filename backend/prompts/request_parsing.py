@@ -4,6 +4,7 @@ from prompts.prompt_types import (
     DesignSession,
     DesignUpdateIntent,
     PromptHistoryMessage,
+    TurnIntent,
     UserTurnInput,
 )
 
@@ -58,6 +59,10 @@ def parse_prompt_content(raw_prompt: object) -> UserTurnInput:
     preview_self_check_enabled = prompt_dict.get("previewSelfCheckEnabled")
     if isinstance(preview_self_check_enabled, bool):
         parsed["preview_self_check_enabled"] = preview_self_check_enabled
+
+    turn_intent = prompt_dict.get("turnIntent")
+    if isinstance(turn_intent, str) and turn_intent.strip():
+        parsed["turn_intent"] = cast(TurnIntent, turn_intent.strip())
 
     design_update_intent = _parse_design_update_intent(
         prompt_dict.get("designUpdateIntent")
@@ -133,6 +138,15 @@ def parse_design_session(raw_session: object) -> DesignSession:
         value = session_dict.get(key)
         if isinstance(value, str) and value.strip():
             parsed[key] = value.strip()
+
+    for key, field_name in (
+        ("lastIntent", "last_intent"),
+        ("pendingQuestion", "pending_question"),
+        ("reviewSummary", "review_summary"),
+    ):
+        value = session_dict.get(key)
+        if isinstance(value, str) and value.strip():
+            parsed[field_name] = value.strip()
 
     revision_log = session_dict.get("revision_log")
     if isinstance(revision_log, list):

@@ -95,6 +95,7 @@ def build_update_prompt_from_history(
         parent_commit_hash=(prompt or {}).get("parent_commit_hash"),
         selected_element_context=(prompt or {}).get("selected_element_context"),
         preview_self_check_enabled=(prompt or {}).get("preview_self_check_enabled"),
+        turn_intent=(prompt or {}).get("turn_intent"),
     )
     design_update_intent_block = build_design_update_intent_block(
         (prompt or {}).get("design_update_intent")
@@ -106,6 +107,7 @@ def build_update_prompt_from_history(
     multi_turn_block = build_multi_turn_instruction_block(
         first_user_text,
         design_session,
+        turn_intent=(prompt or {}).get("turn_intent"),
     )
     for index, item in enumerate(history):
         if index == first_user_index:

@@ -1,9 +1,11 @@
 import {
   classifyGenerationFailure,
+  classifyUserTurnIntent,
   evaluateTargetedEdit,
   isRenderableHtmlDocument,
   parseDesignUpdateIntent,
   runPreviewSelfCheck,
+  summarizeReviewState,
   summarizeImageUpdateStatus,
 } from "./design-agent";
 
@@ -38,6 +40,25 @@ describe("design-agent helpers", () => {
 
   it("classifies timeouts separately", () => {
     expect(classifyGenerationFailure("[timeout] ReadTimeout")).toBe("timeout");
+  });
+
+  it("classifies update and question turns", () => {
+    expect(
+      classifyUserTurnIntent({
+        text: "把播放 前进 后退 调整到第一行居中",
+        generationType: "update",
+        selectedElementHtml: "<div class='controls'>...</div>",
+        currentCode: "<html></html>",
+      })
+    ).toBe("modify");
+
+    expect(
+      classifyUserTurnIntent({
+        text: "为什么这个预览会失败？",
+        generationType: "update",
+        currentCode: "",
+      })
+    ).toBe("question");
   });
 
   it("scores a centered targeted edit as a hit", () => {
@@ -89,5 +110,25 @@ describe("design-agent helpers", () => {
       parentAssetId: "tmp_asset_parent",
       message: undefined,
     });
+  });
+
+  it("summarizes review state for the design session", () => {
+    const summary = summarizeReviewState({
+      turnIntent: "modify",
+      selfCheck: {
+        status: "pass",
+        summary: "Preview self-check passed.",
+        issues: [],
+        isRenderable: true,
+      },
+      imageUpdateStatus: {
+        operation: "edit",
+        status: "ok",
+        persistedAssetUrl: "http://127.0.0.1:7001/local-assets/asset_x.png",
+      },
+    });
+    expect(summary).toContain("intent=modify");
+    expect(summary).toContain("preview=pass");
+    expect(summary).toContain("image=edit/ok");
   });
 });

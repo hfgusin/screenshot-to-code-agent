@@ -17,6 +17,7 @@ def build_image_prompt_messages(
     design_session: DesignSession | None = None,
     design_system: str | None = None,
     workspace_id: str | None = None,
+    turn_intent: str | None = None,
 ) -> list[ChatCompletionMessageParam]:
     image_policy = build_user_image_policy(image_generation_enabled)
     selected_stack = build_selected_stack_policy(stack)
@@ -26,6 +27,7 @@ def build_image_prompt_messages(
     )
     revision_metadata_block = build_revision_metadata_block(
         workspace_id=workspace_id,
+        turn_intent=turn_intent,
     )
     user_prompt = f"""
 Generate code for a web page that looks exactly like the provided screenshot(s).
@@ -46,6 +48,7 @@ Generate code for a web page that looks exactly like the provided screenshot(s).
 - When available, use the edit_image tool to edit the assets when needed. A good example of this might be if the extracted asset is very low resolution or pixelated, or if the extracted asset has unwanted elements.
 - If an asset in the original screenshot is not extractable (for example, occluded by other objects or is the background), when available, use generate_images to create image URLs from prompts (you may pass multiple prompts).
 - If the brief is still too vague after considering the screenshot and session context, ask one concise clarifying question or render a polished clarification screen instead of guessing.
+- Respect the current turn intent when shaping the response: generate = fresh first draft, modify = localized edit, repair = fix the broken part, question = ask a concise clarification or render a question screen.
 - Treat the design session as the persistent memory for follow-up turns.
 
 - {image_policy}

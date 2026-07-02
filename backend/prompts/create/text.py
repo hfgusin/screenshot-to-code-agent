@@ -17,6 +17,7 @@ def build_text_prompt_messages(
     design_session: DesignSession | None = None,
     design_system: str | None = None,
     workspace_id: str | None = None,
+    turn_intent: str | None = None,
 ) -> list[ChatCompletionMessageParam]:
     image_policy = build_user_image_policy(image_generation_enabled)
     selected_stack = build_selected_stack_policy(stack)
@@ -26,6 +27,7 @@ def build_text_prompt_messages(
     )
     revision_metadata_block = build_revision_metadata_block(
         workspace_id=workspace_id,
+        turn_intent=turn_intent,
     )
 
     USER_PROMPT = f"""
@@ -43,6 +45,7 @@ Generate UI for {text_prompt}.
 - Return a full renderable HTML document only. Do not put a prose summary, explanation, or plain text in the file content.
 - Prefer a strong first-pass page skeleton over a long explanation. The preview must be something the iframe can render immediately.
 - If the brief is too vague to design confidently, ask one concise clarifying question or create a polished question screen instead of inventing details.
+- Respect the current turn intent when shaping the response: generate = fresh first draft, modify = localized edit, repair = fix the broken part, question = ask a concise clarification or render a question screen.
 - Treat the design session as the persistent long-term memory for this task; preserve its goal and style across follow-up turns.
 - {image_policy}"""
 
