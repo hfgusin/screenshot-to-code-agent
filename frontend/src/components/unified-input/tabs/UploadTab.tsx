@@ -46,7 +46,7 @@ interface Props {
     referenceImages: string[],
     inputMode: "image" | "video",
     textPrompt?: string
-  ) => void;
+  ) => void | Promise<void>;
   stack: Stack;
   setStack: (stack: Stack) => void;
   designSystem: DesignSystemSelectorProps;

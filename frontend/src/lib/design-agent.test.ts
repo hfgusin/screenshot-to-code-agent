@@ -1,9 +1,14 @@
+jest.mock("../config", () => ({
+  HTTP_BACKEND_URL: "http://127.0.0.1:7001",
+}));
+
 import {
   classifyGenerationFailure,
   classifyUserTurnIntent,
   evaluateTargetedEdit,
   isRenderableHtmlDocument,
   parseDesignUpdateIntent,
+  resolveIntentDecision,
   routeUserTurn,
   runPreviewSelfCheck,
   summarizeReviewState,
@@ -141,5 +146,24 @@ describe("design-agent helpers", () => {
     expect(summary).toContain("intent=modify");
     expect(summary).toContain("preview=pass");
     expect(summary).toContain("image=edit/ok");
+  });
+
+  it("falls back to the local router when the backend intent endpoint is unavailable", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn().mockRejectedValue(new Error("network down")) as unknown as typeof fetch;
+
+    try {
+      const decision = await resolveIntentDecision({
+        text: "把播放 前进 后退 调整到第一行居中",
+        generationType: "update",
+        selectedElementHtml: "<div class='controls'>...</div>",
+        currentCode: "<html></html>",
+      });
+
+      expect(decision.intent).toBe("modify");
+      expect(decision.confidence).toBeGreaterThan(0.8);
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 });

@@ -2,10 +2,12 @@ import {
   AgentImageUpdateStatus,
   AgentTargetingDiagnostics,
   DesignUpdateIntent,
+  DesignSession,
   IntentDecision,
   PreviewSelfCheckResult,
   TurnIntent,
 } from "../types";
+import { HTTP_BACKEND_URL } from "../config";
 
 const LAYOUT_KEYWORDS: Array<[RegExp, Partial<DesignUpdateIntent>]> = [
   [/(居中|center|centered|置中)/i, { alignment: "center" }],
@@ -187,6 +189,135 @@ export function routeUserTurn(params: {
     signals,
     structuredUpdateIntent,
   };
+}
+
+interface IntentRouterResponsePayload extends IntentDecision {
+  source?: "llm" | "rules";
+  model?: string | null;
+}
+
+function normalizeIntentRouterDecision(raw: unknown): IntentDecision | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+
+  const candidate = raw as Partial<IntentRouterResponsePayload> & {
+    decision?: Partial<IntentRouterResponsePayload>;
+  };
+  const payload = candidate.decision ?? candidate;
+  const intent = payload.intent;
+  if (
+    intent !== "generate" &&
+    intent !== "modify" &&
+    intent !== "repair" &&
+    intent !== "question"
+  ) {
+    return null;
+  }
+
+  const confidence =
+    typeof payload.confidence === "number" ? payload.confidence : Number.NaN;
+  if (!Number.isFinite(confidence)) {
+    return null;
+  }
+
+  const reason = typeof payload.reason === "string" ? payload.reason : "";
+  const shouldAskQuestion =
+    typeof payload.shouldAskQuestion === "boolean"
+      ? payload.shouldAskQuestion
+      : typeof (payload as { should_ask_question?: unknown }).should_ask_question === "boolean"
+        ? Boolean((payload as { should_ask_question: boolean }).should_ask_question)
+        : false;
+
+  const signals = Array.isArray(payload.signals)
+    ? payload.signals.filter((signal): signal is string => typeof signal === "string")
+    : [];
+
+  const structuredUpdateIntent = payload.structuredUpdateIntent;
+  const normalizedUpdateIntent =
+    structuredUpdateIntent && typeof structuredUpdateIntent === "object"
+      ? {
+          target:
+            typeof structuredUpdateIntent.target === "string"
+              ? structuredUpdateIntent.target
+              : "",
+          intent:
+            typeof structuredUpdateIntent.intent === "string"
+              ? structuredUpdateIntent.intent
+              : "",
+          placement:
+            typeof structuredUpdateIntent.placement === "string"
+              ? structuredUpdateIntent.placement
+              : "",
+          alignment:
+            typeof structuredUpdateIntent.alignment === "string"
+              ? structuredUpdateIntent.alignment
+              : "",
+          preserve: Array.isArray(structuredUpdateIntent.preserve)
+            ? structuredUpdateIntent.preserve.filter(
+                (item): item is string => typeof item === "string"
+              )
+            : [],
+        }
+      : undefined;
+
+  return {
+    intent,
+    confidence: Number(confidence.toFixed(2)),
+    reason,
+    shouldAskQuestion,
+    signals,
+    structuredUpdateIntent: normalizedUpdateIntent,
+  };
+}
+
+export async function resolveIntentDecision(params: {
+  text: string;
+  generationType: "create" | "update";
+  selectedElementHtml?: string | null;
+  selectedElementContext?: string | null;
+  currentCode?: string;
+  designSession?: DesignSession;
+  fullText?: string;
+}): Promise<IntentDecision> {
+  const fallback = routeUserTurn({
+    text: params.fullText ?? params.text,
+    generationType: params.generationType,
+    selectedElementHtml: params.selectedElementHtml,
+    currentCode: params.currentCode,
+  });
+
+  try {
+    const response = await fetch(`${HTTP_BACKEND_URL}/api/intent-router`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        text: params.text,
+        fullText: params.fullText,
+        generationType: params.generationType,
+        selectedElementHtml: params.selectedElementHtml ?? null,
+        selectedElementContext: params.selectedElementContext ?? null,
+        currentCode: params.currentCode ?? null,
+        designSession: params.designSession ?? null,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Intent router request failed: ${response.status}`);
+    }
+
+    const raw = (await response.json()) as unknown;
+    const decision = normalizeIntentRouterDecision(raw);
+    if (decision) {
+      return decision;
+    }
+  } catch (error) {
+    console.warn("Falling back to local intent router.", error);
+  }
+
+  return fallback;
 }
 
 export function classifyUserTurnIntent(params: {

@@ -35,6 +35,7 @@ import {
   evaluateTargetedEdit,
   parseDesignUpdateIntent,
   routeUserTurn,
+  resolveIntentDecision,
   runPreviewSelfCheck,
   summarizeReviewState,
   summarizeImageUpdateStatus,
@@ -530,10 +531,10 @@ function App() {
 
     // Re-run the create
     if (inputMode === "image" || inputMode === "video") {
-      doCreate(referenceImages, inputMode);
+      void doCreate(referenceImages, inputMode);
     } else {
       // TODO: Fix this
-      doCreateFromText(initialPrompt);
+      void doCreateFromText(initialPrompt);
     }
   };
 
@@ -970,7 +971,7 @@ function App() {
   }
 
   // Initial version creation
-  function doCreate(
+  async function doCreate(
     referenceImages: string[],
     inputMode: "image" | "video",
     textPrompt: string = ""
@@ -982,7 +983,7 @@ function App() {
     setReferenceImages(referenceImages);
     setInputMode(inputMode);
 
-    const intentDecision = routeUserTurn({
+    const intentDecision = await resolveIntentDecision({
       text: textPrompt,
       generationType: "create",
       currentCode: "",
@@ -1059,13 +1060,13 @@ function App() {
     }
   }
 
-  function doCreateFromText(text: string) {
+  async function doCreateFromText(text: string) {
     // Reset any existing state
     reset();
 
     setInputMode("text");
     setInitialPrompt(text);
-    const intentDecision = routeUserTurn({
+    const intentDecision = await resolveIntentDecision({
       text,
       generationType: "create",
       currentCode: "",
@@ -1171,11 +1172,14 @@ function App() {
     const updatedHistory = shouldBootstrapFromFileState
       ? []
       : toRequestHistory(updatedVariantHistory, getAssetsById);
-    const intentDecision = routeUserTurn({
-      text: updateInstruction,
+    const intentDecision = await resolveIntentDecision({
+      text: modifiedUpdateInstruction,
       generationType: "update",
       selectedElementHtml,
       currentCode,
+      selectedElementContext,
+      designSession,
+      fullText: modifiedUpdateInstruction,
     });
     const turnIntent = intentDecision.intent;
     const seededUpdateSession = appendRevisionEntry(
@@ -1201,7 +1205,7 @@ function App() {
     setDesignSession(seededUpdateSession);
     const revisionId = nanoid();
     const designUpdateIntent = parseDesignUpdateIntent(
-      updateInstruction,
+      modifiedUpdateInstruction,
       selectedElement?.tagName?.toLowerCase() ?? null
     );
 

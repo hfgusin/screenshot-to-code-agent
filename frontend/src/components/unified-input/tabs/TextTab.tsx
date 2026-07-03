@@ -7,7 +7,7 @@ import { DesignSystemSelectorProps } from "../../settings/DesignSystemSelector";
 import { Stack } from "../../../lib/stacks";
 
 interface Props {
-  doCreateFromText: (text: string) => void;
+  doCreateFromText: (text: string) => void | Promise<void>;
   stack: Stack;
   setStack: (stack: Stack) => void;
   designSystem: DesignSystemSelectorProps;

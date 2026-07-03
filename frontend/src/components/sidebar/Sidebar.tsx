@@ -23,8 +23,8 @@ import RecentWorkspacesPanel from "../workspace/RecentWorkspacesPanel";
 import { WorkspaceSummary } from "../../lib/workspace-storage";
 
 interface SidebarProps {
-  doUpdate: (instruction: string) => void;
-  regenerate: () => void;
+  doUpdate: (instruction: string) => void | Promise<void>;
+  regenerate: () => void | Promise<void>;
   cancelCodeGeneration: () => void;
   onOpenVersions: () => void;
   designSession: DesignSession;
