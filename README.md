@@ -1,88 +1,112 @@
-# screenshot-to-code
+# screenshot-to-code-agent
 
-Convert screenshots, mockups, Figma designs, and screen recordings into clean, functional code using AI. The easiest way to try this is using <a href="https://screenshottocode.com/?utm_source=github&utm_medium=readme&utm_campaign=oss_readme&utm_content=top_cta" target="_blank" rel="noopener noreferrer">the official, hosted product at screenshottocode.com →</a>
+这是一个基于 [abi/screenshot-to-code](https://github.com/abi/screenshot-to-code) 继续演进出来的定制分支。
 
-This repository is a customized fork based on [abi/screenshot-to-code](https://github.com/abi/screenshot-to-code). It keeps the original UI generation foundation and adds a single-agent design workflow, multi-turn editing, workspace recovery, QA regression, and richer diagnostics for design iteration.
+我们保留“截图 / 文本 / 参考图 -> 生成 UI”的底层能力，但把重点改成了更像一个能持续工作的设计 Agent：
 
+- 不是一次性出图，而是围绕同一主稿持续修改
+- 不是整页重画，而是支持点选元素后局部命中
+- 不是生成完就结束，而是先做预览自检和失败诊断
+- 不是把所有状态丢掉，而是保留工作区和历史
+- 不是黑盒体验，而是把调试、QA、意图路由都露出来
 
-https://github.com/user-attachments/assets/ec08a5e6-9606-41c5-b03a-1bf47dfeba75
+## 演示图
 
+先看成品，再看工作流。
 
-Supported stacks:
+| 成品图 | 过程图 |
+| --- | --- |
+| ![游戏战绩演示图](game.png) | ![UI 迭代界面](ui_image.png) |
 
-- HTML + Tailwind
-- HTML + CSS
-- React + Tailwind
-- Vue + Tailwind
-- Bootstrap
-- Ionic + Tailwind
+这两张图可以直接放在 README 首屏，读的人一眼就能明白：
 
-Default AI models:
+- `game.png` 是我们最终想交付的竖版战绩页
+- `ui_image.png` 是我们在生成、调试、迭代时的工作界面
 
-- Gemini 3 Flash Preview and Gemini 3.1 Pro Preview - the best models
-- GPT-5.5 and GPT-5.4 Mini
-- Claude Opus 4.6, Claude Opus 4.8
-- z-image-turbo (using Replicate) for image generation
+## 能力面板
 
-See the [Examples](#-examples) section below for more demos.
+| 能力 | 当前状态 | 作用 |
+| --- | --- | --- |
+| 单主稿生成 | 已接入 | 优先产出一个可继续迭代的主版本 |
+| 局部编辑 | 已接入 | 点选元素后只改局部，提高二次命中率 |
+| 预览自检 | 已接入 | 先检查可渲染性、可见性、报错信息 |
+| 工作区持久化 | 已接入 | 刷新、重开后可恢复上次上下文 |
+| Agent Debug 面板 | 已接入 | 查看意图、计划、调用链、异常细节 |
+| QA 面板 | 已接入 | 观察命中率、失败率、耗时、回滚情况 |
+| 可渲染 root 清理 | 已接入 | 只保留首个可渲染输出，其余进诊断区 |
+| 意图路由 | 已接入 | 生成、修改、修复、提问走不同路径 |
+| 参考型联网检索 | 已接入 | 对参考说明做检索增强，提升对齐度 |
 
-Screenshot to Code also supports taking a screen recording of a website in action and turning that into a functional prototype.
+## 这版和原版不一样的地方
 
-![google in app quick 3](https://github.com/abi/screenshot-to-code/assets/23818/8758ffa4-9483-4b9b-bb66-abd6d1594c33)
+原版更像“截图到代码工具”。
+这版更像“能连续干活的 UI 生成 Agent”。
 
-## 🛠 Getting Started
+我们做的不是换个壳，而是把工作方式换掉了：
 
-Choose the path that fits what you want to do:
+1. 先出一版主稿，再围绕同一稿持续迭代
+2. 先判断用户意图，再决定是生成、局部修改还是修复
+3. 先做可渲染性和自检，再把结果交给用户
+4. 先保留工作区状态，再谈恢复和回滚
+5. 先把调试信息和 QA 数据露出来，再谈质量提升
 
-- **Run locally:** best if you want to customize, self-host, or contribute.
-- **Use the hosted app:** the fastest way to try Screenshot to Code with no local setup. <a href="https://screenshottocode.com/?utm_source=github&utm_medium=readme&utm_campaign=oss_readme&utm_content=getting_started_cta" target="_blank" rel="noopener noreferrer">Open the hosted app →</a>
+## 生成链路
 
-Running locally requires API keys and a backend/frontend setup. The app has a React/Vite frontend and a FastAPI backend.
+```text
+截图 / 文本 / 参考图
+        ->
+   意图路由
+        ->
+   单主稿生成
+        ->
+   局部编辑 / 修复
+        ->
+   预览自检
+        ->
+   QA / Debug 面板
+```
 
-### API keys
+## 我们想解决的事
 
-You need **at least one** model provider key (OpenAI, Anthropic, or Gemini).
-**Gemini and Replicate are strongly recommended for the best quality of
-screenshot-to-code accuracy** — Gemini powers asset extraction (reusing the
-real logos/images from your screenshot) and Replicate powers image
-generation, background removal, and image editing. Adding all four keys gives
-the best results and lets you compare multiple models per generation.
+- 竖版 app / 手机端页面不好看，不能只靠“能生成”来掩盖布局问题
+- 生成结果必须能继续改，而不是每次都推倒重来
+- 用户二次修改时，命中率要明显高于“粗暴重画”
+- 出问题时要能定位，不要只剩一个笼统失败提示
 
-| Key | Required? | What it unlocks |
-|-----|-----------|-----------------|
-| `OPENAI_API_KEY` | One of these three | GPT code-gen variants (GPT-5.5, GPT-5.4 Mini) |
-| `ANTHROPIC_API_KEY` | One of these three | Claude code-gen variants (Opus 4.8, Fable 5, Sonnet 4.6) |
-| `GEMINI_API_KEY` | One of these three — **strongly recommended** | Gemini code-gen variants (3 Flash, 3.1 Pro); extracts real assets from the screenshot; required for video mode |
-| `REPLICATE_API_KEY` | **Strongly recommended** | Image editing, background removal, and Replicate-backed image generation — without it, `edit_image` and `remove_background` are unavailable, and image generation falls back to OpenAI if configured |
+## 本地启动
 
-With more keys, the app automatically picks a stronger mix of models per
-variant; with a single key it uses that provider's models only.
-
-If you'd like to run the app with Ollama open-source models (not recommended due to poor-quality results), [follow this comment](https://github.com/abi/screenshot-to-code/issues/354#issuecomment-2435479853).
-
-Run the backend (I use Poetry for package management; run `pip install --upgrade poetry` if you don't have it):
+### 1. 后端
 
 ```bash
 cd backend
-echo "OPENAI_API_KEY=sk-your-key" > .env
-echo "ANTHROPIC_API_KEY=your-key" >> .env
-echo "GEMINI_API_KEY=your-key" >> .env
-echo "REPLICATE_API_KEY=r8_your-key" >> .env
+cp .env.example .env
+```
+
+把模型配置填进 `backend/.env`。
+
+如果你的文本模型和图片模型不是同一家，可以分开配：
+
+```bash
+OPENAI_API_KEY=your_text_or_compat_key
+OPENAI_BASE_URL=https://your-text-provider.example/v1
+OPENAI_MODEL=your-text-model
+
+OPENAI_IMAGE_MODEL=your-image-model
+OPENAI_IMAGE_SIZE=1K
+OPENAI_IMAGE_STREAM=false
+OPENAI_IMAGE_SEQUENTIAL_IMAGE_GENERATION=disabled
+OPENAI_IMAGE_WATERMARK=true
+```
+
+然后启动：
+
+```bash
 poetry install
-# Install the Chromium browser used by the screenshot preview tool.
-# On Linux, use `poetry run playwright install --with-deps chromium` to also
-# install the required system libraries (needs sudo/apt).
 poetry run playwright install chromium
-poetry env activate
-# run the printed command, e.g. source /path/to/venv/bin/activate
 poetry run uvicorn main:app --reload --port 7001
 ```
 
-You can also set up OpenAI, Anthropic, and Gemini keys using the settings dialog in the frontend (click the gear icon after loading the app). Replicate must be configured in `backend/.env` as `REPLICATE_API_KEY`. The Settings dialog also shows whether **screenshot preview** is available on your backend.
-
-> **Screenshot preview** (optional) lets the agent render its own generated page in a headless browser and visually check its work. It's enabled automatically once Chromium is installed (the `playwright install chromium` step above, or automatically in the Docker image). If Chromium is missing, the app just skips the tool — the Settings dialog shows whether it's available.
-
-Run the frontend:
+### 2. 前端
 
 ```bash
 cd frontend
@@ -90,45 +114,49 @@ yarn
 yarn dev
 ```
 
-Open http://localhost:5173 to use the app.
+打开：
 
-If you prefer to run the backend on a different port, update `VITE_WS_BACKEND_URL` in `frontend/.env.local`.
+- `http://localhost:5173`
 
-## Docker
+如果后端地址不是默认值，再调整 `frontend/.env.local` 里的：
 
-If you have Docker installed, run this from the root directory:
+- `VITE_HTTP_BACKEND_URL`
+- `VITE_WS_BACKEND_URL`
+
+## 输入类型
+
+这个项目支持两类输入：
+
+- 截图 / 参考图
+- 文本 brief
+
+如果你要做“图片二次更新”或“局部视觉修改”，建议先点选目标元素，再提交修改说明，这样更容易命中。
+
+## 模型配置建议
+
+如果你用的是 OpenAI-compatible 接口，通常只需要把这几项配好：
 
 ```bash
-echo "OPENAI_API_KEY=sk-your-key" > .env
-docker-compose up -d --build
+OPENAI_API_KEY=...
+OPENAI_BASE_URL=...
+OPENAI_MODEL=...
 ```
 
-The app will be up and running at http://localhost:5173. Note that you can't develop the application with this setup, as file changes won't trigger a rebuild.
+如果文本和生图来自不同供应商，也可以继续拆开配，文本走一套，图片走另一套。
 
-## 🙋‍♂️ FAQs
+## 项目定位
 
-- **I'm running into an error when setting up the backend. How can I fix it?** [Try this](https://github.com/abi/screenshot-to-code/issues/3#issuecomment-1814777959). If that still doesn't work, open an issue.
-- **How do I get an OpenAI API key?** See https://github.com/abi/screenshot-to-code/blob/main/Troubleshooting.md
-- **How can I configure an OpenAI proxy?** If you're not able to access the OpenAI API directly, for example because of country restrictions, you can try a VPN or configure the OpenAI base URL to use a proxy. Set `OPENAI_BASE_URL` in `backend/.env` or directly in the UI in the settings dialog. Make sure the URL has `v1` in the path, for example: `https://xxx.xxxxx.xxx/v1`.
-- **How can I switch image generation models?** Set `OPENAI_IMAGE_MODEL` in `backend/.env`. It defaults to `gpt-image-2`, but you can point it at an OpenAI-compatible image model such as `doubao-seedream-4-0-250828` when your image endpoint supports it. For cheaper generations, also set `OPENAI_IMAGE_SIZE=1K` (or another size your provider accepts).
-- **How can I update the backend host that my frontend connects to?** Configure `VITE_HTTP_BACKEND_URL` and `VITE_WS_BACKEND_URL` in `frontend/.env.local`. For example, set `VITE_HTTP_BACKEND_URL=http://124.10.20.1:7001`.
-- **Seeing UTF-8 errors when running the backend?** On Windows, open the `.env` file with Notepad++, then go to Encoding and select UTF-8.
-- **How can I provide feedback?** For feedback, feature requests, and bug reports, open an issue or ping me on [Twitter](https://twitter.com/_abi_).
+这版仓库的目标不是“再做一个一次性生成器”，而是做一个能连续工作的设计 Agent 雏形：
 
-## 📚 Examples
+- 先生成可见主稿
+- 再连续改
+- 改动可解释
+- 失败有诊断
+- 结果可回滚
+- 历史可恢复
 
-**NYTimes**
+## 说明
 
-| Original                                                                                                                                                        | Replica                                                                                                                                                         |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| <img width="1238" alt="Screenshot 2023-11-20 at 12 54 03 PM" src="https://github.com/user-attachments/assets/6b0ae86c-1b0f-4598-a578-c7b62205b3e2"> | <img width="1435" height="737" alt="Screenshot 2026-06-15 at 3 06 37 PM" src="https://github.com/user-attachments/assets/48f0ab94-5fdc-41e7-ad6e-b4ad7ef69ae1" /> |
-
-
-**Instagram**
-
-https://github.com/user-attachments/assets/a335a105-f9cc-40e6-ac6b-64e5390bfc21
-
-**Hacker News**
-
-
-https://github.com/user-attachments/assets/205cb5c7-9c3c-438d-acd4-26dfe6e077e5
+- 这不是上游仓库的原样 README
+- 文案、功能描述、演示视频都应该以我们自己这版为准
+- 演示图片目前直接引用仓库根目录的 `game.png` 和 `ui_image.png`
