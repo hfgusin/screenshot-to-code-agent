@@ -19,10 +19,10 @@ function RecentWorkspacesPanel({
     <div className="rounded-2xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-3">
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
-          Recent Workspaces
+          最近工作区
         </h3>
         <span className="text-[10px] text-gray-400 dark:text-gray-500">
-          Up to 5
+          最多 5 个
         </span>
       </div>
       <div className="space-y-2">
@@ -50,7 +50,7 @@ function RecentWorkspacesPanel({
                   </p>
                 </div>
                 <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-zinc-800 dark:text-gray-400">
-                  {isActive ? "Open" : "Load"}
+                  {isActive ? "当前" : "载入"}
                 </span>
               </div>
             </button>

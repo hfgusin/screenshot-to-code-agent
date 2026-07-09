@@ -15,7 +15,7 @@ interface Props {
 function CodeTab({ code, setCode, settings }: Props) {
   const copyCode = useCallback(() => {
     copy(code);
-    toast.success("Copied to clipboard");
+    toast.success("已复制到剪贴板");
   }, [code]);
 
   const doOpenInCodepenio = useCallback(async () => {
@@ -57,19 +57,19 @@ function CodeTab({ code, setCode, settings }: Props) {
     <div className="relative">
       <div className="flex justify-start items-center px-4 mb-2">
         <span
-          title="Copy Code"
+          title="复制代码"
           className="bg-black text-white flex items-center justify-center hover:text-black hover:bg-gray-100 cursor-pointer rounded-lg text-sm p-2.5"
           onClick={copyCode}
           data-testid="copy-code"
         >
-          Copy Code <FaCopy className="ml-2" />
+          复制代码 <FaCopy className="ml-2" />
         </span>
         <Button
           onClick={doOpenInCodepenio}
           className="bg-gray-100 text-black ml-2 py-2 px-4 border border-black rounded-md hover:bg-gray-400 focus:outline-none"
           data-testid="open-codepen"
         >
-          Open in{" "}
+          打开到{" "}
           <img
             src="https://assets.codepen.io/t-1/codepen-logo.svg"
             alt="codepen.io"

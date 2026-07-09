@@ -31,8 +31,11 @@ import {
   describeElementContext,
 } from "./components/select-and-edit/utils";
 import {
+  buildChangeReport,
   classifyGenerationFailure,
   evaluateTargetedEdit,
+  extractRenderableDiagnostics,
+  getPreviewEscalationReason,
   parseDesignUpdateIntent,
   routeUserTurn,
   resolveIntentDecision,
@@ -40,6 +43,7 @@ import {
   summarizeReviewState,
   summarizeImageUpdateStatus,
 } from "./lib/design-agent";
+import { extractRenderableOutput } from "./lib/renderable-output";
 import { useEscapeToExitSelectMode } from "./components/select-and-edit/useEscapeToExitSelectMode";
 import Sidebar from "./components/sidebar/Sidebar";
 import IconStrip from "./components/sidebar/IconStrip";
@@ -57,6 +61,8 @@ function createEmptyDesignSession(): DesignSession {
     constraints: "",
     style: "",
     references: "",
+    latestDelta: "",
+    sessionSummary: "",
     revisionLog: [],
     lastUpdatedAt: null,
   };
@@ -85,6 +91,8 @@ function buildSeededDesignSession(
     constraints: existingSession?.constraints ?? "",
     style: existingSession?.style ?? "",
     references: existingSession?.references ?? "",
+    latestDelta: existingSession?.latestDelta ?? "",
+    sessionSummary: existingSession?.sessionSummary ?? "",
     revisionLog: existingSession?.revisionLog ?? [],
     lastIntent: extras?.lastIntent ?? existingSession?.lastIntent ?? "generate",
     intentConfidence:
@@ -114,9 +122,21 @@ function appendRevisionEntry(
     };
   }
 
+  const nextRevisionLog = [...(session.revisionLog ?? []), trimmedEntry];
+  const keptRevisionLog = nextRevisionLog.slice(-5);
+  const omittedCount = Math.max(0, nextRevisionLog.length - keptRevisionLog.length);
+  const priorSummary = session.sessionSummary?.trim();
+  const nextSummary = omittedCount
+    ? priorSummary
+      ? `${priorSummary} | 已压缩 ${omittedCount} 条更早修订。`
+      : `已压缩 ${omittedCount} 条更早修订。`
+    : priorSummary ?? "";
+
   return {
     ...session,
-    revisionLog: [...(session.revisionLog ?? []), trimmedEntry].slice(-12),
+    latestDelta: trimmedEntry,
+    sessionSummary: nextSummary,
+    revisionLog: keptRevisionLog,
     lastUpdatedAt: new Date().toISOString(),
   };
 }
@@ -126,7 +146,7 @@ function summarizeDesignRevision(
   promptText: string
 ): string {
   const trimmedPrompt = promptText.trim();
-  const prefix = generationType === "create" ? "Create" : "Update";
+  const prefix = generationType === "create" ? "创建" : "更新";
   if (!trimmedPrompt) {
     return prefix;
   }
@@ -135,7 +155,7 @@ function summarizeDesignRevision(
     trimmedPrompt.length > maxLen
       ? `${trimmedPrompt.slice(0, maxLen - 1)}…`
       : trimmedPrompt;
-  return `${prefix}: ${clipped}`;
+  return `${prefix}：${clipped}`;
 }
 
 function App() {
@@ -192,6 +212,8 @@ function App() {
     {
       openAiApiKey: null,
       openAiBaseURL: null,
+      openAiImageApiKey: null,
+      openAiImageBaseURL: null,
       anthropicApiKey: null,
       geminiApiKey: null,
       screenshotOneApiKey: null,
@@ -269,7 +291,7 @@ function App() {
     try {
       const isFirst = designSystems.length === 0;
       const created = await createDesignSystem({
-        name: `Design system ${designSystems.length + 1}`,
+        name: `设计系统 ${designSystems.length + 1}`,
         content: NEW_DESIGN_SYSTEM_CONTENT,
       });
       if (isFirst) {
@@ -277,8 +299,8 @@ function App() {
       }
       openDesignSystemsManager(created.id);
     } catch (error) {
-      console.error("Failed to create design system", error);
-      toast.error("Could not create design system.");
+      console.error("创建设计系统失败", error);
+      toast.error("创建设计系统失败。");
     }
   }, [
     createDesignSystem,
@@ -416,8 +438,8 @@ function App() {
     try {
       await flushWorkspaceNow();
     } catch (error) {
-      console.error("Failed to checkpoint current workspace before creating a new one", error);
-      toast.error("Could not save the current workspace before starting a new one.");
+      console.error("新建项目之前保存当前 workspace 失败", error);
+      toast.error("开始新项目之前，当前 workspace 保存失败。");
     }
 
     beginWorkspaceTransition(nextWorkspaceId);
@@ -517,7 +539,7 @@ function App() {
   const regenerate = () => {
     if (head === null) {
       toast.error(
-        "No current version set. Please contact support via chat or Github."
+        "当前没有可用版本，请通过聊天或 Github 联系支持。"
       );
       throw new Error("Regenerate called with no head");
     }
@@ -525,7 +547,7 @@ function App() {
     // Retrieve the previous command
     const currentCommit = commits[head];
     if (currentCommit.type !== "ai_create") {
-      toast.error("Only the first version can be regenerated.");
+      toast.error("只有首个版本可以重新生成。");
       return;
     }
 
@@ -706,16 +728,51 @@ function App() {
       },
       onSetCode: (code, variantIndex) => {
         setCommitCode(commit.hash, variantIndex, code);
+        const renderingDiagnostics = extractRenderableDiagnostics(code);
+        if (renderingDiagnostics.hasRenderableDocument || renderingDiagnostics.discardedContentLength) {
+          patchVariant(commit.hash, variantIndex, {
+            diagnostics: {
+              rendering: renderingDiagnostics,
+              message: renderingDiagnostics.discardedContentLength
+                ? "已从预览源码中裁掉不可渲染内容。"
+                : undefined,
+            },
+          });
+        }
       },
       onStatusUpdate: (line, variantIndex) =>
         appendExecutionConsole(variantIndex, line),
       onVariantComplete: (variantIndex) => {
         console.log(`Variant ${variantIndex} complete event received`);
+        const commitInputs =
+          commit.type === "code_create" ? null : commit.inputs;
         const currentCode =
           useProjectStore.getState().commits[commit.hash]?.variants[variantIndex]
             ?.code || "";
+        const renderableCode = extractRenderableOutput(currentCode) || "";
+        const parentCode =
+          commit.parentHash &&
+          useProjectStore.getState().commits[commit.parentHash]?.variants[
+            useProjectStore.getState().commits[commit.parentHash]
+              .selectedVariantIndex ?? 0
+          ]?.code;
         const selfCheckStartedAt = Date.now();
-        const selfCheck = runPreviewSelfCheck(currentCode);
+        const selfCheck = runPreviewSelfCheck(currentCode, {
+          generationType: requestParams.generationType,
+          turnIntent,
+          selectedElementHtml: commitInputs?.selectedElementHtml,
+          previousCode: parentCode || "",
+          designUpdateIntent: commitInputs?.designUpdateIntent,
+          userInstruction: commitInputs?.text,
+        });
+        const previewEscalationReason = getPreviewEscalationReason({
+          generationType: requestParams.generationType,
+          turnIntent,
+          selectedElementHtml: commitInputs?.selectedElementHtml,
+          previousCode: parentCode || "",
+          designUpdateIntent: commitInputs?.designUpdateIntent,
+          userInstruction: commitInputs?.text,
+        });
         const previewSelfCheckMs = Math.max(0, Date.now() - selfCheckStartedAt);
         const requestStartedAt =
           useProjectStore.getState().commits[commit.hash]?.variants[variantIndex]
@@ -723,23 +780,21 @@ function App() {
         const commitSnapshot = useProjectStore.getState().commits[commit.hash];
         const variantSnapshot = commitSnapshot?.variants[variantIndex];
         const backendMetrics = variantBackendMetrics.get(variantIndex) || {};
-        const parentCode =
-          commit.parentHash &&
-          useProjectStore.getState().commits[commit.parentHash]?.variants[
-            useProjectStore.getState().commits[commit.parentHash]
-              .selectedVariantIndex ?? 0
-          ]?.code;
         const computedTargeting =
           commit.type === "ai_edit"
             ? evaluateTargetedEdit({
                 previousCode: parentCode || "",
-                nextCode: currentCode,
+                nextCode: renderableCode || currentCode,
                 selectedElementHtml: commit.inputs.selectedElementHtml,
                 designUpdateIntent: commit.inputs.designUpdateIntent,
                 userInstruction: commit.inputs.text,
               })
             : undefined;
         const targeting = computedTargeting ?? backendMetrics.targeting;
+        const changeReport = buildChangeReport({
+          previousCode: parentCode || "",
+          nextCode: renderableCode || currentCode,
+        });
         const computedImageUpdateStatus = summarizeImageUpdateStatus(
           variantSnapshot?.agentEvents ?? []
         );
@@ -753,16 +808,25 @@ function App() {
         });
         patchVariant(commit.hash, variantIndex, {
           diagnostics: {
+            promptStrategy: backendMetrics.promptStrategy,
             selfCheckStatus: selfCheck.status,
             selfCheckSummary: selfCheck.summary,
             selfCheckIssues: selfCheck.issues,
+            localCheckOnly: selfCheck.localCheckOnly,
+            escalatedPreviewCheck: selfCheck.escalatedPreviewCheck,
+            previewEscalationReason:
+              backendMetrics.previewEscalationReason ?? previewEscalationReason,
             failureStage: backendMetrics.failureStage,
+            promptStrategyReason: backendMetrics.promptStrategyReason,
             targeting,
             imageUpdateStatus,
+            changeReport,
           },
           metrics: {
             runId,
             durationMs: Math.max(0, Date.now() - requestStartedAt),
+            promptStrategy: backendMetrics.promptStrategy,
+            promptMetrics: backendMetrics.promptMetrics,
             stageTimings: {
               ...backendMetrics.stageTimings,
               previewSelfCheckMs,
@@ -775,11 +839,11 @@ function App() {
           selfCheck.status === "fail" ? "error" : "complete",
           selfCheck.status === "fail" ? selfCheck.summary : undefined
         );
-        if (currentCode.trim().length > 0) {
+        if ((renderableCode || currentCode).trim().length > 0) {
           appendVariantHistoryMessage(
             commit.hash,
             variantIndex,
-            buildAssistantHistoryMessage(currentCode)
+            buildAssistantHistoryMessage(renderableCode || currentCode)
           );
         }
         setDesignSession((prev) => ({
@@ -831,11 +895,15 @@ function App() {
           diagnostics: {
             stage: classifyGenerationFailure(error),
             message: error,
+            promptStrategy: backendMetrics.promptStrategy,
+            promptStrategyReason: backendMetrics.promptStrategyReason,
             failureStage:
               backendMetrics.failureStage || classifyGenerationFailure(error),
           },
           metrics: {
             runId,
+            promptStrategy: backendMetrics.promptStrategy,
+            promptMetrics: backendMetrics.promptMetrics,
             stageTimings: backendMetrics.stageTimings,
           },
         });
@@ -924,7 +992,7 @@ function App() {
                 commit.hash,
                 variantIndex,
                 "error",
-                errorMessage || "Generation failed. Please retry."
+                errorMessage || "生成失败，请重试。"
               );
             }
           });
@@ -948,7 +1016,7 @@ function App() {
         if (selfCheckStatus === "fail" && commit.type === "ai_edit") {
           toast.error(
             selectedVariant?.diagnostics?.selfCheckSummary ||
-              "The new draft failed preview self-check, so the previous version was kept."
+              "新草稿没有通过预览自检，因此保留了上一版。"
           );
           cancelCodeGenerationAndReset(commit);
           return;
@@ -993,7 +1061,7 @@ function App() {
     const seededDesignSession = appendRevisionEntry(
       buildSeededDesignSession(textPrompt, {
       ...createEmptyDesignSession(),
-      goal: textPrompt.trim() || "Create a polished UI from the provided references.",
+      goal: textPrompt.trim() || "根据提供的参考图生成一版完整且精致的 UI。",
       }, {
         lastIntent: turnIntent,
         intentConfidence: intentDecision.confidence,
@@ -1075,7 +1143,7 @@ function App() {
     const seededDesignSession = appendRevisionEntry(
       buildSeededDesignSession(text, {
       ...createEmptyDesignSession(),
-      goal: text.trim() || "Create a polished UI from the provided brief.",
+      goal: text.trim() || "根据当前需求说明生成一版完整且精致的 UI。",
       }, {
         lastIntent: turnIntent,
         intentConfidence: intentDecision.confidence,
@@ -1116,13 +1184,13 @@ function App() {
   // Subsequent updates
   async function doUpdate(updateInstruction: string) {
     if (updateInstruction.trim() === "") {
-      toast.error("Please include some instructions for AI on what to update.");
+      toast.error("请先告诉 AI 你希望修改什么。");
       return;
     }
 
     if (head === null) {
       toast.error(
-        "No current version set. Contact support or open a Github issue."
+        "当前没有可用版本，请联系支持或提交 Github issue。"
       );
       throw new Error("Update called with no head");
     }
@@ -1353,7 +1421,7 @@ function App() {
                   : "text-gray-500 dark:text-zinc-400"
               }`}
             >
-              Preview
+              预览
             </button>
             <button
               onClick={() => setMobilePane("chat")}
@@ -1363,7 +1431,7 @@ function App() {
                   : "text-gray-500 dark:text-zinc-400"
               }`}
             >
-              Chat
+              对话
             </button>
           </div>
         </div>
@@ -1380,13 +1448,13 @@ function App() {
               <div className="flex-1 overflow-y-auto sidebar-scrollbar-stable px-4">
                 <div className="mt-3">
                   <div className="flex items-center justify-between mb-3 px-1">
-                    <h2 className="text-xs font-medium uppercase tracking-wider text-gray-400 dark:text-gray-500">Versions</h2>
+                    <h2 className="text-xs font-medium uppercase tracking-wider text-gray-400 dark:text-gray-500">版本记录</h2>
                     <button
                       onClick={() => setIsHistoryOpen(false)}
                       className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
                     >
                       <LuChevronLeft className="w-3.5 h-3.5" />
-                      Back to editor
+                      返回编辑区
                     </button>
                   </div>
                   <HistoryDisplay />

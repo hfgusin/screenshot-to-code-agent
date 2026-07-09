@@ -35,7 +35,7 @@ function IconStrip({
       >
         <img
           src="/favicon/main.png"
-          alt="Logo"
+          alt="标志"
           className="w-5 h-5 dark:invert"
         />
       </button>
@@ -51,10 +51,10 @@ function IconStrip({
                 ? "text-gray-900 dark:text-white"
                 : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
             }`}
-            title="Editor"
+            title="编辑区"
           >
             <LuCode className="w-[18px] h-[18px]" />
-            <span className="hidden text-[10px] leading-none lg:block">Editor</span>
+            <span className="hidden text-[10px] leading-none lg:block">编辑</span>
           </button>
         )}
 
@@ -68,10 +68,10 @@ function IconStrip({
                 ? "text-gray-900 dark:text-white"
                 : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
             }`}
-            title="Versions"
+            title="版本"
           >
             <LuClock className="w-[18px] h-[18px]" />
-            <span className="hidden text-[10px] leading-none lg:block">Versions</span>
+            <span className="hidden text-[10px] leading-none lg:block">版本</span>
           </button>
         )}
 
@@ -79,10 +79,10 @@ function IconStrip({
           onClick={onNewProject}
           data-testid="icon-new-project"
           className="flex items-center justify-center rounded-lg p-2 transition-colors bg-violet-100 text-violet-700 hover:bg-violet-200 lg:flex-col lg:gap-1 lg:px-2 lg:py-1.5 dark:bg-violet-900/40 dark:text-violet-200 dark:hover:bg-violet-900/60"
-          title="Start a new project"
+          title="新建项目"
         >
           <LuPlus className="w-[18px] h-[18px]" />
-          <span className="hidden text-[10px] leading-none lg:block font-medium">New</span>
+          <span className="hidden text-[10px] leading-none lg:block font-medium">新建</span>
         </button>
       </div>
 
@@ -98,10 +98,10 @@ function IconStrip({
             ? "text-gray-900 dark:text-white"
             : "text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
         }`}
-        title="Settings"
+        title="设置"
       >
         <LuSettings className="w-[18px] h-[18px]" />
-        <span className="hidden text-[10px] leading-none lg:block">Settings</span>
+        <span className="hidden text-[10px] leading-none lg:block">设置</span>
       </button>
     </div>
   );

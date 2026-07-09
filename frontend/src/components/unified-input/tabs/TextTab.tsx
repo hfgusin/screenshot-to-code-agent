@@ -14,10 +14,10 @@ interface Props {
 }
 
 const EXAMPLE_PROMPTS = [
-  "An ecommerce homepage for eco-friendly skincare with product grid, reviews, and newsletter signup",
-  "A portfolio site for a product designer with case studies, process steps, and contact",
-  "A mobile fitness app dashboard with workout plan, progress ring, and quick-start buttons",
-  "A music streaming app with now-playing, recommended playlists, and recent listens",
+  "环保护肤品牌电商首页，包含商品网格、用户评价和订阅入口",
+  "产品设计师作品集网站，包含案例研究、设计流程和联系方式",
+  "移动健身 app 仪表盘，包含训练计划、进度环和快速开始按钮",
+  "音乐播放 app，包含正在播放、推荐歌单和最近收听",
 ];
 
 function TextTab({ doCreateFromText, stack, setStack, designSystem }: Props) {
@@ -30,7 +30,7 @@ function TextTab({ doCreateFromText, stack, setStack, designSystem }: Props) {
 
   const handleGenerate = () => {
     if (text.trim() === "") {
-      toast.error("Please enter a description");
+      toast.error("请先输入描述");
       return;
     }
     doCreateFromText(text);
@@ -73,7 +73,7 @@ function TextTab({ doCreateFromText, stack, setStack, designSystem }: Props) {
             </div>
 
             <div className="text-center">
-              <h3 className="text-gray-700 dark:text-zinc-200 font-medium">Generate from Text</h3>
+              <h3 className="text-gray-700 dark:text-zinc-200 font-medium">根据文字生成</h3>
             </div>
           </div>
 
@@ -81,7 +81,7 @@ function TextTab({ doCreateFromText, stack, setStack, designSystem }: Props) {
             <Textarea
               ref={textareaRef}
               rows={4}
-              placeholder="Describe the UI you want to create..."
+              placeholder="描述你想生成的 UI..."
               className="w-full resize-none"
               value={text}
               onChange={(e) => setText(e.target.value)}
@@ -90,7 +90,7 @@ function TextTab({ doCreateFromText, stack, setStack, designSystem }: Props) {
             />
 
             <div className="flex flex-col gap-2">
-              <p className="text-xs text-gray-500 dark:text-zinc-400">Try an example:</p>
+              <p className="text-xs text-gray-500 dark:text-zinc-400">试试示例：</p>
               <div className="flex flex-wrap gap-2">
                 {EXAMPLE_PROMPTS.map((example, index) => (
                   <button
@@ -117,11 +117,11 @@ function TextTab({ doCreateFromText, stack, setStack, designSystem }: Props) {
               size="lg"
               data-testid="text-generate"
             >
-              Generate
+              生成
             </Button>
 
             <p className="text-xs text-gray-400 dark:text-zinc-500 text-center">
-              Press Cmd/Ctrl + Enter to generate
+              按 Cmd/Ctrl + Enter 生成
             </p>
           </div>
         </div>

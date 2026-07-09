@@ -41,10 +41,9 @@ function DesignSystemsModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Design Systems</DialogTitle>
+          <DialogTitle>设计系统</DialogTitle>
           <DialogDescription>
-            Define color, typography, and layout rules applied to every
-            generation.
+            定义每次生成都会应用的颜色、字体和布局规则。
           </DialogDescription>
         </DialogHeader>
         <DesignSystemsManager

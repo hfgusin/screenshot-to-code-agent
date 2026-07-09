@@ -73,7 +73,7 @@ function UnifiedInputPane({
             data-testid="tab-upload"
           >
             <UploadIcon />
-            <span className="hidden sm:inline">Upload</span>
+            <span className="hidden sm:inline">上传</span>
           </TabsTrigger>
           <TabsTrigger
             value="url"
@@ -89,7 +89,7 @@ function UnifiedInputPane({
             data-testid="tab-text"
           >
             <TextIcon />
-            <span className="hidden sm:inline">Text</span>
+            <span className="hidden sm:inline">文本</span>
           </TabsTrigger>
           <TabsTrigger
             value="import"
@@ -97,7 +97,7 @@ function UnifiedInputPane({
             data-testid="tab-import"
           >
             <ImportIcon />
-            <span className="hidden sm:inline">Import</span>
+            <span className="hidden sm:inline">导入</span>
           </TabsTrigger>
         </TabsList>
 

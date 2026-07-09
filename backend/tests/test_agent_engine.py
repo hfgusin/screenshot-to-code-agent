@@ -43,6 +43,42 @@ class _FakeSession:
         return None
 
 
+class _RepeatedEditFailureSession:
+    def __init__(self) -> None:
+        self.turn_count = 0
+
+    async def stream_turn(
+        self,
+        _on_event: Callable[[Any], Awaitable[None]],
+    ) -> ProviderTurn:
+        self.turn_count += 1
+        return ProviderTurn(
+            assistant_text="",
+            tool_calls=[
+                ToolCall(
+                    id=f"call-{self.turn_count}",
+                    name="edit_file",
+                    arguments={
+                        "old_text": ">点赞<",
+                        "new_text": ">支持<",
+                        "count": 1,
+                    },
+                )
+            ],
+            assistant_turn=None,
+        )
+
+    async def append_tool_results(
+        self,
+        _turn: ProviderTurn,
+        _executed_tool_calls: list[Any],
+    ) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
 @pytest.mark.asyncio
 async def test_agent_engine_runs_preview_self_check_after_file_change(
     monkeypatch: pytest.MonkeyPatch,
@@ -106,3 +142,50 @@ async def test_agent_engine_runs_preview_self_check_after_file_change(
     assert calls == ["create_file", "screenshot_preview"]
     assert any(message[0] == "toolStart" for message in sent_messages)
     assert any(message[0] == "toolResult" for message in sent_messages)
+
+
+@pytest.mark.asyncio
+async def test_agent_engine_stops_repeated_old_text_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_session = _RepeatedEditFailureSession()
+
+    def fake_create_provider_session(**_kwargs: Any) -> _RepeatedEditFailureSession:
+        return fake_session
+
+    async def fake_execute(self: Any, tool_call: ToolCall) -> ToolExecutionResult:
+        return ToolExecutionResult(
+            ok=False,
+            result={"error": "old_text not found", "old_text": tool_call.arguments["old_text"]},
+            summary={"error": "old_text not found", "old_text": tool_call.arguments["old_text"]},
+        )
+
+    monkeypatch.setattr("agent.engine.create_provider_session", fake_create_provider_session)
+    monkeypatch.setattr("agent.engine.AgentToolRuntime.execute", fake_execute)
+
+    async def send_message(
+        _msg_type: str,
+        _value: str | None,
+        _variant_index: int,
+        _data: Dict[str, Any] | None,
+        _event_id: str | None,
+    ) -> None:
+        return None
+
+    engine = AgentEngine(
+        send_message=send_message,
+        variant_index=0,
+        openai_api_key="key",
+        openai_base_url=None,
+        anthropic_api_key=None,
+        gemini_api_key=None,
+        should_generate_images=False,
+    )
+
+    with pytest.raises(Exception, match="old_text was not found"):
+        await engine.run(
+            Llm.DOUBAO_SEED_2_0_MINI_260428,
+            [{"role": "user", "content": "Change the button label."}],
+        )
+
+    assert fake_session.turn_count == 3

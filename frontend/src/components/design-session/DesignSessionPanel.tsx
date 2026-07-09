@@ -69,44 +69,44 @@ function DesignSessionPanel({
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
-            Design Session
+            设计会话
           </h3>
           <p className="mt-0.5 text-xs text-gray-500 dark:text-zinc-400">
-            Persistent brief for multi-turn updates and revisions.
+            多轮修改会持续复用的设计简报。
           </p>
         </div>
         <Badge variant="secondary" className="rounded-full px-2.5 py-1">
-          Multi-turn
+          多轮
         </Badge>
       </div>
 
       <div className={compact ? "grid gap-3" : "grid gap-4"}>
         <Field
-          label="Goal"
+          label="目标"
           value={designSession.goal}
           onChange={(value) => updateField("goal", value)}
-          placeholder="What should the design ultimately achieve?"
+          placeholder="这个设计最终要达成什么效果？"
           compact={compact}
         />
         <Field
-          label="Style"
+          label="风格"
           value={designSession.style}
           onChange={(value) => updateField("style", value)}
-          placeholder="Editorial, premium, dense data, minimal..."
+          placeholder="编辑感、高级感、数据密集、极简..."
           compact={compact}
         />
         <Field
-          label="Constraints"
+          label="约束"
           value={designSession.constraints}
           onChange={(value) => updateField("constraints", value)}
-          placeholder="Allowed components, brand rules, must-keep content..."
+          placeholder="允许使用的组件、品牌规则、必须保留的内容..."
           compact={compact}
         />
         <Field
-          label="References"
+          label="参考"
           value={designSession.references}
           onChange={(value) => updateField("references", value)}
-          placeholder="URLs, products, screenshots, or a short note"
+          placeholder="URL、产品、截图，或简短备注"
           compact={compact}
         />
       </div>
@@ -120,14 +120,14 @@ function DesignSessionPanel({
           {designSession.lastIntent && (
             <div className="rounded-xl border border-violet-200/80 bg-violet-50/70 px-3 py-2 text-xs dark:border-violet-900/50 dark:bg-violet-950/20">
               <div className="mb-1 font-semibold uppercase tracking-wider text-violet-700 dark:text-violet-300">
-                Last intent
+                最近意图
               </div>
               <div className="text-violet-900 dark:text-violet-100">
                 {designSession.lastIntent}
               </div>
               {typeof designSession.intentConfidence === "number" && (
                 <div className="mt-1 text-violet-700 dark:text-violet-300">
-                  confidence {(designSession.intentConfidence * 100).toFixed(0)}%
+                  置信度 {(designSession.intentConfidence * 100).toFixed(0)}%
                 </div>
               )}
               {designSession.intentReason && (
@@ -152,7 +152,7 @@ function DesignSessionPanel({
           {designSession.pendingQuestion && (
             <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-2 text-xs dark:border-amber-900/50 dark:bg-amber-950/20">
               <div className="mb-1 font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300">
-                Pending question
+                待补充问题
               </div>
               <div className="text-amber-900 dark:text-amber-100">
                 {designSession.pendingQuestion}
@@ -162,7 +162,7 @@ function DesignSessionPanel({
           {designSession.reviewSummary && (
             <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/70 px-3 py-2 text-xs dark:border-emerald-900/50 dark:bg-emerald-950/20">
               <div className="mb-1 font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
-                Review summary
+                审查摘要
               </div>
               <div className="text-emerald-900 dark:text-emerald-100">
                 {designSession.reviewSummary}
@@ -176,10 +176,10 @@ function DesignSessionPanel({
         <div className="mt-4">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-zinc-400">
-              Revision trail
+              修订轨迹
             </span>
             <span className="text-xs text-gray-400 dark:text-zinc-500">
-              {designSession.revisionLog.length} entries
+              {designSession.revisionLog.length} 条
             </span>
           </div>
           <div className="flex flex-wrap gap-2">
