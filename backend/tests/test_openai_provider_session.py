@@ -4,9 +4,14 @@ from typing import Any
 import pytest
 
 from agent.providers.base import ExecutedToolCall, ProviderTurn
-from agent.providers.openai import OpenAIProviderSession
+from agent.providers.openai import (
+    OpenAIChatCompletionsProviderSession,
+    OpenAIProviderSession,
+    serialize_openai_chat_tools,
+)
 from agent.tools import ToolCall, ToolExecutionResult
-from llm import Llm
+from agent.tools.types import CanonicalToolDefinition
+from llm import Llm, get_openai_api_name
 
 
 class _EmptyAsyncStream:
@@ -29,6 +34,72 @@ class _FakeResponses:
 class _FakeOpenAIClient:
     def __init__(self) -> None:
         self.responses = _FakeResponses()
+
+    async def close(self) -> None:
+        return None
+
+
+class _FakeChatCompletions:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def create(self, **kwargs: Any) -> Any:
+        self.calls.append(copy.deepcopy(kwargs))
+
+        class _ToolFunction:
+            def __init__(self) -> None:
+                self.name = "edit_file"
+                self.arguments = '{"path":"index.html"}'
+
+        class _ToolCall:
+            def __init__(self) -> None:
+                self.id = "call-1"
+                self.function = _ToolFunction()
+
+        class _Message:
+            def __init__(self) -> None:
+                self.content = "hello"
+                self.tool_calls = [_ToolCall()]
+
+            def model_dump(self, exclude_none: bool = True) -> dict[str, Any]:
+                return {
+                    "role": "assistant",
+                    "content": self.content,
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {
+                                "name": "edit_file",
+                                "arguments": '{"path":"index.html"}',
+                            },
+                        }
+                    ],
+                }
+
+        class _Completion:
+            def __init__(self) -> None:
+                self.choices = [type("Choice", (), {"message": _Message()})()]
+                self.usage = type(
+                    "Usage",
+                    (),
+                    {
+                        "prompt_tokens": 12,
+                        "completion_tokens": 8,
+                        "total_tokens": 20,
+                    },
+                )()
+
+        return _Completion()
+
+
+class _FakeChatOpenAIClient:
+    def __init__(self) -> None:
+        class _Chat:
+            completions: Any
+
+        self.chat = _Chat()
+        self.chat.completions = _FakeChatCompletions()
 
     async def close(self) -> None:
         return None
@@ -218,6 +289,62 @@ async def test_openai_provider_session_uses_gpt_5_5_reasoning_effort(
 
     assert first_call["model"] == "gpt-5.5"
     assert first_call["reasoning"] == {"effort": effort, "summary": "auto"}
+
+
+@pytest.mark.asyncio
+async def test_openai_chat_provider_session_uses_chat_completions_flow() -> None:
+    client = _FakeChatOpenAIClient()
+    session = OpenAIChatCompletionsProviderSession(
+        client=client,  # type: ignore[arg-type]
+        model=Llm.DOUBAO_SEED_2_0_MINI_260428,
+        prompt_messages=[{"role": "user", "content": "Build a dashboard."}],
+        tools=serialize_openai_chat_tools(
+            [
+                CanonicalToolDefinition(
+                    name="edit_file",
+                    description="Apply an edit.",
+                    parameters={
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}},
+                        "required": ["path"],
+                    },
+                )
+            ]
+        ),
+    )
+
+    turn = await session.stream_turn(_noop_event_sink)
+    assert turn.assistant_text == "hello"
+    assert turn.tool_calls[0].name == "edit_file"
+    assert client.chat.completions.calls[0]["stream"] is False
+    assert client.chat.completions.calls[0]["model"] == get_openai_api_name(
+        Llm.DOUBAO_SEED_2_0_MINI_260428
+    )
+    assert client.chat.completions.calls[0]["tools"][0]["function"]["name"] == "edit_file"
+
+    await session.append_tool_results(
+        turn,
+        [
+            ExecutedToolCall(
+                tool_call=ToolCall(
+                    id="call-1",
+                    name="edit_file",
+                    arguments={"path": "index.html"},
+                ),
+                result=ToolExecutionResult(
+                    ok=True,
+                    result={
+                        "content": "Successfully edited file at index.html.",
+                        "details": {"diff": "", "firstChangedLine": 1},
+                    },
+                    summary={"content": "Successfully edited file at index.html."},
+                ),
+            )
+        ],
+    )
+
+    assert session._messages[-1]["role"] == "tool"
+    assert session._messages[-1]["tool_call_id"] == "call-1"
 
 
 @pytest.mark.asyncio

@@ -8,10 +8,15 @@ from openai.types.chat import ChatCompletionMessageParam
 from agent.providers.anthropic import AnthropicProviderSession, serialize_anthropic_tools
 from agent.providers.base import ProviderSession
 from agent.providers.gemini import GeminiProviderSession, serialize_gemini_tools
-from agent.providers.openai import OpenAIProviderSession, serialize_openai_tools
+from agent.providers.openai import (
+    OpenAIChatCompletionsProviderSession,
+    OpenAIProviderSession,
+    serialize_openai_chat_tools,
+    serialize_openai_tools,
+)
 from agent.tools import canonical_tool_definitions
 from config import REPLICATE_API_KEY
-from llm import ANTHROPIC_MODELS, GEMINI_MODELS, OPENAI_MODELS, Llm
+from llm import ANTHROPIC_MODELS, GEMINI_MODELS, OPENAI_MODELS, Llm, get_openai_api_name
 from preview_screenshot import is_screenshot_preview_available
 
 
@@ -38,8 +43,15 @@ def create_provider_session(
     if model in OPENAI_MODELS:
         if not openai_api_key:
             raise Exception("OpenAI API key is missing.")
-
+        api_model_name = get_openai_api_name(model)
         client = AsyncOpenAI(api_key=openai_api_key, base_url=openai_base_url)
+        if _should_use_chat_completions(api_model_name, openai_base_url):
+            return OpenAIChatCompletionsProviderSession(
+                client=client,
+                model=model,
+                prompt_messages=prompt_messages,
+                tools=serialize_openai_chat_tools(canonical_tools),
+            )
         return OpenAIProviderSession(
             client=client,
             model=model,
@@ -72,3 +84,23 @@ def create_provider_session(
         )
 
     raise ValueError(f"Unsupported model: {model.value}")
+
+
+def _should_use_chat_completions(
+    api_model_name: str,
+    openai_base_url: Optional[str],
+) -> bool:
+    lowered_model = api_model_name.lower()
+    if lowered_model.startswith("kimi-"):
+        return True
+    if lowered_model.startswith("doubao-"):
+        return True
+    if openai_base_url:
+        lowered_base_url = openai_base_url.lower()
+        if "kimi" in lowered_base_url:
+            return True
+        if "volces" in lowered_base_url or "volcengine" in lowered_base_url:
+            return True
+        if "ark" in lowered_base_url and "api/v3" in lowered_base_url:
+            return True
+    return False

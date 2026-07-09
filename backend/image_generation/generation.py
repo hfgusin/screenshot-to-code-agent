@@ -152,7 +152,16 @@ async def _post_openai_image_generation(
     timeout = httpx.Timeout(DEFAULT_OPENAI_IMAGE_TIMEOUT_SECONDS)
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(endpoint, headers=headers, json=payload)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            body = response.text.strip()
+            if len(body) > 2000:
+                body = body[:2000] + "..."
+            raise RuntimeError(
+                "OpenAI-compatible image generation failed "
+                f"with status {response.status_code} at {endpoint}: {body}"
+            ) from exc
         return response.json()
 
 

@@ -2,6 +2,7 @@ from openai.types.chat import ChatCompletionContentPartParam, ChatCompletionMess
 
 from prompts.design_session import (
     build_design_session_prompt_block,
+    build_responsive_design_guidance_block,
     build_revision_metadata_block,
 )
 from prompts.prompt_types import DesignSession, IntentDecision, Stack
@@ -26,6 +27,7 @@ def build_image_prompt_messages(
     design_session_block = build_design_session_prompt_block(
         design_session, workspace_id=workspace_id
     )
+    responsive_design_block = build_responsive_design_guidance_block()
     revision_metadata_block = build_revision_metadata_block(
         workspace_id=workspace_id,
         turn_intent=turn_intent,
@@ -37,6 +39,7 @@ Generate code for a web page that looks exactly like the provided screenshot(s).
 {selected_stack}
 {design_system_block}
 {design_session_block}
+{responsive_design_block}
 {revision_metadata_block}
 
 ## Replication instructions

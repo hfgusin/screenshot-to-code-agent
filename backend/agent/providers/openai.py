@@ -129,6 +129,25 @@ def serialize_openai_tools(
             }
         )
     return serialized
+
+
+def serialize_openai_chat_tools(
+    tools: List[CanonicalToolDefinition],
+) -> List[Dict[str, Any]]:
+    serialized: List[Dict[str, Any]] = []
+    for tool in tools:
+        schema = _make_responses_schema_strict(tool.parameters)
+        serialized.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": schema,
+                },
+            }
+        )
+    return serialized
 @dataclass
 class OpenAIResponsesParseState:
     assistant_text: str = ""
@@ -162,6 +181,23 @@ def _extract_openai_usage(response: Any) -> TokenUsage:
         cache_read=cached_tokens,
         cache_write=0,
         total=total_tokens,
+    )
+
+
+def _extract_chat_usage(response: Any) -> TokenUsage:
+    usage = _get_event_attr(response, "usage")
+    if usage is None:
+        return TokenUsage()
+
+    prompt_tokens = _get_event_attr(usage, "prompt_tokens", 0) or 0
+    completion_tokens = _get_event_attr(usage, "completion_tokens", 0) or 0
+    total_tokens = _get_event_attr(usage, "total_tokens", 0) or 0
+    return TokenUsage(
+        input=prompt_tokens,
+        output=completion_tokens,
+        cache_read=0,
+        cache_write=0,
+        total=total_tokens or prompt_tokens + completion_tokens,
     )
 
 
@@ -512,6 +548,129 @@ class OpenAIProviderSession(ProviderSession):
                 }
             )
         self._input_items.extend(tool_output_items)
+
+    async def close(self) -> None:
+        u = self._total_usage
+        model_name = get_openai_api_name(self._model)
+        pricing = MODEL_PRICING.get(model_name)
+        cost_str = f" cost=${u.cost(pricing):.4f}" if pricing else ""
+        cache_hit_rate_str = f" cache_hit_rate={u.cache_hit_rate_percent():.2f}%"
+        print(
+            f"[TOKEN USAGE] provider=openai model={model_name} | "
+            f"input={u.input} output={u.output} "
+            f"cache_read={u.cache_read} cache_write={u.cache_write} "
+            f"total={u.total}{cache_hit_rate_str}{cost_str}"
+        )
+        await self._client.close()
+
+
+@dataclass
+class OpenAIChatParseState:
+    assistant_text: str = ""
+
+
+def _extract_chat_tool_calls_from_message(message: Any) -> List[ToolCall]:
+    tool_calls: List[ToolCall] = []
+    raw_tool_calls = getattr(message, "tool_calls", None) or []
+    for tool_call in raw_tool_calls:
+        function = getattr(tool_call, "function", None)
+        arguments = getattr(function, "arguments", "") if function else ""
+        parsed_args, error = parse_json_arguments(arguments)
+        if error:
+            parsed_args = {"INVALID_JSON": ensure_str(arguments)}
+        tool_calls.append(
+            ToolCall(
+                id=getattr(tool_call, "id", None) or f"call-{uuid.uuid4().hex[:6]}",
+                name=getattr(function, "name", None) or "unknown_tool",
+                arguments=parsed_args,
+            )
+        )
+    return tool_calls
+
+
+class OpenAIChatCompletionsProviderSession(ProviderSession):
+    def __init__(
+        self,
+        client: AsyncOpenAI,
+        model: Llm,
+        prompt_messages: List[ChatCompletionMessageParam],
+        tools: List[Dict[str, Any]],
+    ):
+        self._client = client
+        self._model = model
+        self._tools = tools
+        self._total_usage = TokenUsage()
+        self._prompt_report_logger = PromptReportLogger(
+            provider="openai",
+            model=model,
+            api_model_name=get_openai_api_name(model),
+        )
+        self._messages: List[Dict[str, Any]] = [dict(message) for message in prompt_messages]
+
+    async def stream_turn(self, on_event: EventSink) -> ProviderTurn:
+        model_name = get_openai_api_name(self._model)
+        params: Dict[str, Any] = {
+            "model": model_name,
+            "messages": self._messages,
+            "tools": self._tools,
+            "tool_choice": "auto",
+            "stream": False,
+            "max_tokens": 50000,
+        }
+        self._prompt_report_logger.record_request(params)
+
+        completion = await self._client.chat.completions.create(**params)  # type: ignore
+        choice = completion.choices[0]
+        message = choice.message
+        assistant_text = getattr(message, "content", "") or ""
+        if assistant_text:
+            await on_event(StreamEvent(type="assistant_delta", text=assistant_text))
+
+        tool_calls = _extract_chat_tool_calls_from_message(message)
+        for tool_call in tool_calls:
+            await on_event(
+                StreamEvent(
+                    type="tool_call_delta",
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    tool_arguments=tool_call.arguments,
+                )
+            )
+
+        usage = _extract_chat_usage(completion)
+        if usage.total or usage.input or usage.output:
+            self._prompt_report_logger.record_usage(usage)
+            self._total_usage.accumulate(usage)
+
+        assistant_turn = (
+            [message.model_dump(exclude_none=True)]
+            if hasattr(message, "model_dump")
+            else [{"role": "assistant", "content": assistant_text}]
+        )
+        return ProviderTurn(
+            assistant_text=assistant_text,
+            tool_calls=tool_calls,
+            assistant_turn=assistant_turn,
+        )
+
+    async def append_tool_results(
+        self,
+        turn: ProviderTurn,
+        executed_tool_calls: list[ExecutedToolCall],
+    ) -> None:
+        assistant_output_items = turn.assistant_turn or []
+        if assistant_output_items:
+            self._messages.extend(assistant_output_items)
+
+        for executed in executed_tool_calls:
+            result_json = json.dumps(executed.result.result)
+            self._messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": executed.tool_call.id,
+                    "content": result_json,
+                }
+            )
 
     async def close(self) -> None:
         u = self._total_usage

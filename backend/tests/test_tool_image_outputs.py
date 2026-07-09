@@ -239,6 +239,61 @@ async def test_generate_images_emits_url_parts(
 
 
 @pytest.mark.asyncio
+async def test_generate_images_uses_image_specific_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, str | None] = {}
+
+    async def fake_process_tasks(
+        prompts: List[str], api_key: str, base_url: Any, model: str
+    ) -> List[str]:
+        captured["api_key"] = api_key
+        captured["base_url"] = base_url
+        captured["model"] = model
+        return ["https://example.com/generated.png" for _ in prompts]
+
+    class _Saved:
+        def __init__(self, public_url: str) -> None:
+            self.public_url = public_url
+            self.content_type = "image/png"
+
+    async def fake_persist_remote_image_url_as_asset(
+        image_url: str, asset_base_url: str, user_id: str | None = None
+    ) -> _Saved:
+        assert image_url == "https://example.com/generated.png"
+        path = tmp_path / "asset_generated.png"
+        path.write_bytes(b"generated-image")
+        return _Saved("http://127.0.0.1:7001/local-assets/asset_generated.png")
+
+    monkeypatch.setattr("agent.tools.runtime.process_tasks", fake_process_tasks)
+    monkeypatch.setattr(
+        "agent.tools.runtime.persist_remote_image_url_as_asset",
+        fake_persist_remote_image_url_as_asset,
+    )
+
+    runtime = AgentToolRuntime(
+        file_state=AgentFileState(),
+        should_generate_images=True,
+        openai_api_key="text-key",
+        openai_base_url="https://text.example/v1",
+        openai_image_api_key="image-key",
+        openai_image_base_url="https://image.example/v1",
+    )
+
+    result = await runtime.execute(
+        ToolCall(id="t", name="generate_images", arguments={"prompts": ["a logo"]})
+    )
+
+    assert result.ok is True
+    assert captured == {
+        "api_key": "image-key",
+        "base_url": "https://image.example/v1",
+        "model": "gpt_image_2",
+    }
+
+
+@pytest.mark.asyncio
 async def test_edit_image_emits_url_part(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("agent.tools.runtime.REPLICATE_API_KEY", "fake-key")
 
@@ -286,6 +341,68 @@ async def test_edit_image_emits_url_part(monkeypatch: pytest.MonkeyPatch) -> Non
             "assetId": "tmp_asset_edited",
             "parentAssetId": None,
         }
+    }
+
+
+@pytest.mark.asyncio
+async def test_edit_image_fallback_uses_image_specific_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, str | None] = {}
+
+    async def fake_generate_image_openai(
+        prompt: str,
+        api_key: str,
+        base_url: str | None,
+        *,
+        image_url: str | None = None,
+    ) -> str:
+        captured["prompt"] = prompt
+        captured["api_key"] = api_key
+        captured["base_url"] = base_url
+        captured["image_url"] = image_url
+        return "https://example.com/edited.png"
+
+    class _Saved:
+        asset_id = "tmp_asset_edited"
+        public_url = "http://127.0.0.1:7001/local-assets/edited.png"
+        content_type = "image/png"
+
+    async def fake_persist_remote_image_url_as_asset(
+        image_url: str, asset_base_url: str, user_id: str | None = None
+    ) -> _Saved:
+        assert image_url == "https://example.com/edited.png"
+        return _Saved()
+
+    monkeypatch.setattr("agent.tools.runtime.generate_image_openai", fake_generate_image_openai)
+    monkeypatch.setattr(
+        "agent.tools.runtime.persist_remote_image_url_as_asset",
+        fake_persist_remote_image_url_as_asset,
+    )
+
+    runtime = AgentToolRuntime(
+        file_state=AgentFileState(),
+        should_generate_images=True,
+        openai_api_key="text-key",
+        openai_base_url="https://text.example/v1",
+        openai_image_api_key="image-key",
+        openai_image_base_url="https://image.example/v1",
+    )
+    result = await runtime.execute(
+        ToolCall(
+            id="t",
+            name="edit_image",
+            arguments={"prompt": "bw", "image_urls": ["https://x/in.png"]},
+        )
+    )
+
+    assert result.multimodal_parts is not None
+    assert result.result["image"]["persistedAssetUrl"] == "http://127.0.0.1:7001/local-assets/edited.png"
+    assert captured == {
+        "prompt": "bw",
+        "api_key": "image-key",
+        "base_url": "https://image.example/v1",
+        "image_url": "https://x/in.png",
     }
 
 

@@ -15,6 +15,8 @@ export enum AppTheme {
 export interface Settings {
   openAiApiKey: string | null;
   openAiBaseURL: string | null;
+  openAiImageApiKey: string | null;
+  openAiImageBaseURL: string | null;
   screenshotOneApiKey: string | null;
   isImageGenerationEnabled: boolean;
   editorTheme: EditorTheme;
@@ -40,6 +42,8 @@ export interface DesignSession {
   constraints: string;
   style: string;
   references: string;
+  latestDelta?: string;
+  sessionSummary?: string;
   revisionLog: string[];
   lastIntent?: TurnIntent;
   intentConfidence?: number;
@@ -101,6 +105,36 @@ export interface AgentImageUpdateStatus {
   message?: string;
 }
 
+export interface AgentRenderingDiagnostics {
+  primaryDocumentType: "html" | "none";
+  hasRenderableDocument: boolean;
+  discardedContentPreview?: string;
+  discardedContentLength?: number;
+}
+
+export interface AgentPromptMetrics {
+  promptChars?: number;
+  promptMessages?: number;
+  estimatedTokens?: number;
+  fileSnapshotChars?: number;
+  designSessionChars?: number;
+  historyMessageCount?: number;
+  historyChars?: number;
+  imageAssetCount?: number;
+  selectedElementChars?: number;
+}
+
+export interface AgentChangeReport {
+  addedNodes: number;
+  removedNodes: number;
+  changedNodes: number;
+  totalNodesBefore: number;
+  totalNodesAfter: number;
+  impact: "low" | "medium" | "high";
+  changedRegions: string[];
+  summary: string;
+}
+
 export type PreviewSelfCheckStatus = "pass" | "warn" | "fail";
 
 export interface PreviewSelfCheckResult {
@@ -108,6 +142,8 @@ export interface PreviewSelfCheckResult {
   summary: string;
   issues: string[];
   isRenderable: boolean;
+  localCheckOnly?: boolean;
+  escalatedPreviewCheck?: boolean;
 }
 
 export enum AppState {

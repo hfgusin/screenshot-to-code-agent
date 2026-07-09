@@ -1,5 +1,7 @@
 import {
+  AgentChangeReport,
   AgentImageUpdateStatus,
+  AgentRenderingDiagnostics,
   AgentTargetingDiagnostics,
   DesignUpdateIntent,
   DesignSession,
@@ -8,6 +10,7 @@ import {
   TurnIntent,
 } from "../types";
 import { HTTP_BACKEND_URL } from "../config";
+import { splitRenderableOutput } from "./renderable-output";
 
 const LAYOUT_KEYWORDS: Array<[RegExp, Partial<DesignUpdateIntent>]> = [
   [/(居中|center|centered|置中)/i, { alignment: "center" }],
@@ -56,6 +59,10 @@ const MODIFY_KEYWORDS = [
   /(update|modify|refine|reposition|restyle|align|center)/i,
 ];
 
+const REFERENCE_KEYWORDS = [
+  /(参考|仿照|借鉴|类似|看齐|像.*一样|风格参考|参考图|reference)/i,
+];
+
 const CREATE_KEYWORDS = [
   /(做|生成|创建|设计|画|build|create|make|generate|design)/i,
 ];
@@ -79,6 +86,7 @@ function collectMatchedSignals(params: {
   if (hasAnyMatch(text, QUESTION_KEYWORDS)) signals.push("question");
   if (hasAnyMatch(text, REPAIR_KEYWORDS)) signals.push("repair");
   if (hasAnyMatch(text, MODIFY_KEYWORDS)) signals.push("modify");
+  if (hasAnyMatch(text, REFERENCE_KEYWORDS)) signals.push("reference");
   if (hasAnyMatch(text, CREATE_KEYWORDS)) signals.push("create");
   if (params.selectedElementHtml?.trim()) signals.push("selection");
   if (params.currentCode?.trim()) signals.push("draft");
@@ -112,13 +120,13 @@ export function routeUserTurn(params: {
   const structuredUpdateIntent = buildStructuredUpdateIntent(params);
   let intent: TurnIntent = params.generationType === "create" ? "generate" : "modify";
   let confidence = 0.5;
-  let reason = "Default router fallback.";
+  let reason = "使用默认路由兜底。";
   let shouldAskQuestion = false;
 
   if (!text && params.generationType === "update") {
     intent = "modify";
     confidence = 0.82;
-    reason = "Empty update text with an existing draft usually means a localized edit.";
+    reason = "已有草稿但更新文本为空，通常表示一次局部编辑。";
   } else if (
     !hasExistingDraft &&
     params.generationType === "update" &&
@@ -126,19 +134,23 @@ export function routeUserTurn(params: {
   ) {
     intent = "question";
     confidence = 0.88;
-    reason = "The request looks like a clarification without an active draft.";
+    reason = "当前请求更像在澄清问题，而不是直接改稿。";
     shouldAskQuestion = true;
   } else if (hasAnyMatch(text, REPAIR_KEYWORDS)) {
     intent = "repair";
     confidence = 0.9;
-    reason = "Repair keywords were detected.";
+    reason = "命中了修复类关键词。";
+  } else if (hasAnyMatch(text, REFERENCE_KEYWORDS)) {
+    intent = params.generationType === "create" ? "generate" : "modify";
+    confidence = 0.81;
+    reason = "提到了参考风格，后端会先补充上下文再生成。";
   } else if (
     hasSelection &&
     (params.generationType === "update" || hasAnyMatch(text, MODIFY_KEYWORDS))
   ) {
     intent = "modify";
     confidence = 0.92;
-    reason = "A selected element strongly indicates a localized update.";
+    reason = "存在选区，强烈说明这是一次局部更新。";
   } else if (hasAnyMatch(text, QUESTION_KEYWORDS) && !hasAnyMatch(text, MODIFY_KEYWORDS)) {
     intent =
       params.generationType === "create" && hasAnyMatch(text, CREATE_KEYWORDS)
@@ -147,25 +159,25 @@ export function routeUserTurn(params: {
     confidence = intent === "generate" ? 0.64 : 0.72;
     reason =
       intent === "generate"
-        ? "The text contains a question mark but also a clear create intent."
-        : "The text looks like a clarification request.";
+        ? "文本里虽然有问句，但整体仍然是明确的创建请求。"
+        : "文本整体更像是在请求澄清。";
     shouldAskQuestion = intent === "question";
   } else if (params.generationType === "create") {
     intent = "generate";
     confidence = 0.84;
-    reason = "Create mode defaults to a fresh draft.";
+    reason = "create 模式默认生成一份新草稿。";
   } else if (hasAnyMatch(text, MODIFY_KEYWORDS)) {
     intent = "modify";
     confidence = 0.76;
-    reason = "Modification keywords were detected.";
+    reason = "命中了修改类关键词。";
   } else if (hasAnyMatch(text, CREATE_KEYWORDS)) {
     intent = "generate";
     confidence = 0.7;
-    reason = "Create keywords were detected.";
+    reason = "命中了创建类关键词。";
   } else {
     intent = params.generationType === "update" ? "modify" : "generate";
     confidence = 0.58;
-    reason = "No strong routing signal was found, so the router used the default path.";
+    reason = "没有发现特别强的路由信号，因此走默认路径。";
     shouldAskQuestion = params.generationType === "update" && !hasSelection && text.length < 24;
   }
 
@@ -173,7 +185,7 @@ export function routeUserTurn(params: {
     confidence = Math.min(confidence, 0.68);
     if (text.length < 16) {
       shouldAskQuestion = true;
-      reason = "The update is short and ungrounded, so the router is asking for clarification.";
+      reason = "这次更新描述太短且缺少锚点，因此路由器会先要求补充说明。";
     }
   }
 
@@ -405,7 +417,7 @@ export function parseDesignUpdateIntent(
     preserve:
       preserve.length > 0
         ? preserve
-        : ["Preserve the rest of the page outside the targeted container."],
+        : ["保留目标容器之外的其他页面内容不变。"],
   };
 }
 
@@ -418,53 +430,288 @@ function stripCodeFences(code: string): string {
 }
 
 export function isRenderableHtmlDocument(code: string): boolean {
-  const trimmed = stripCodeFences(code);
-  return /<!DOCTYPE\s+html\b/i.test(trimmed) || /<html\b/i.test(trimmed);
+  return splitRenderableOutput(code).hasRenderableDocument;
 }
 
-export function runPreviewSelfCheck(code: string): PreviewSelfCheckResult {
+// 提取首个可渲染文档的诊断信息，供 preview 和 debug 面板复用。
+export function extractRenderableDiagnostics(
+  code: string
+): AgentRenderingDiagnostics {
+  const split = splitRenderableOutput(code);
+  return {
+    primaryDocumentType: split.primaryDocumentType,
+    hasRenderableDocument: split.hasRenderableDocument,
+    discardedContentPreview:
+      split.discardedContent.length > 0
+        ? split.discardedContent.slice(0, 240)
+        : undefined,
+    discardedContentLength: split.discardedContent.length || undefined,
+  };
+}
+
+interface PreviewSelfCheckOptions {
+  generationType?: "create" | "update";
+  turnIntent?: TurnIntent;
+  selectedElementHtml?: string | null;
+  previousCode?: string;
+  designUpdateIntent?: DesignUpdateIntent;
+  userInstruction?: string;
+}
+
+// 根据本轮请求的类型和内容，判断是否需要升级到更重的 preview 审查。
+export function getPreviewEscalationReason(
+  options?: PreviewSelfCheckOptions
+): string | null {
+  if (!options) return null;
+  if (options.generationType === "create") return "create_requires_full_review";
+  if (options.turnIntent === "repair") return "repair_turn";
+
+  const intent = options.designUpdateIntent?.intent?.toLowerCase() || "";
+  if (
+    ["replace", "image update", "restyle", "resize", "reposition"].includes(intent)
+  ) {
+    return `intent_${intent.replace(/\s+/g, "_")}`;
+  }
+
+  const text = (options.userInstruction || "").toLowerCase();
+  if (
+    /(layout|重排|间距|spacing|图片|image|hero|responsive|移动端|mobile)/i.test(text)
+  ) {
+    return "layout_or_image_keyword";
+  }
+  return null;
+}
+
+// 先用本地硬规则做一层低成本自检，尽早拦住明显坏稿。
+export function runPreviewSelfCheck(
+  code: string,
+  options?: PreviewSelfCheckOptions
+): PreviewSelfCheckResult {
   const trimmed = stripCodeFences(code);
+  const split = splitRenderableOutput(trimmed);
   const issues: string[] = [];
+  const hardFailures: string[] = [];
+  const previewEscalationReason = getPreviewEscalationReason(options);
+  const escalatedPreviewCheck = previewEscalationReason !== null;
+  const localCheckOnly = !escalatedPreviewCheck;
 
   if (!trimmed) {
     return {
       status: "fail",
-      summary: "The agent returned an empty draft.",
-      issues: ["No code was produced."],
+      summary: "Agent 返回了空草稿。",
+      issues: ["没有产出任何代码。"],
       isRenderable: false,
+      localCheckOnly,
+      escalatedPreviewCheck,
     };
   }
 
-  const renderable = isRenderableHtmlDocument(trimmed);
+  const renderable = split.hasRenderableDocument;
   if (!renderable) {
-    issues.push("The result is not a full HTML document.");
+    hardFailures.push("结果不是一份完整的 HTML 文档。");
+  }
+  if (split.discardedContent.trim().length > 0) {
+    issues.push(
+      "结果里混入了首个文档之外的非渲染内容。"
+    );
   }
   if (/^(here('|’)s|i('|’)ve|updated|summary:|explanation:)/i.test(trimmed)) {
-    issues.push("The result looks like assistant prose instead of previewable code.");
+    hardFailures.push(
+      "结果更像是说明文字，而不是可预览的代码。"
+    );
   }
   if (!/<body\b/i.test(trimmed)) {
-    issues.push("The result does not include a <body> tag.");
+    issues.push("结果里没有包含 <body> 标签。");
+  }
+  if (
+    /(cannot read properties|referenceerror|syntaxerror|unexpected token|typeerror)/i.test(
+      trimmed
+    )
+  ) {
+    hardFailures.push("结果里疑似包含运行时错误或语法错误。");
   }
 
-  if (issues.length === 0) {
+  if (options?.selectedElementHtml?.trim() && options.previousCode?.trim()) {
+    const targeting = evaluateTargetedEdit({
+      previousCode: options.previousCode,
+      nextCode: split.renderableCode || trimmed,
+      selectedElementHtml: options.selectedElementHtml,
+      designUpdateIntent: options.designUpdateIntent,
+      userInstruction: options.userInstruction || "",
+    });
+
+    if (!targeting) {
+      issues.push("无法高置信度匹配到目标元素。");
+    } else {
+      if (!targeting.changedInsideTarget) {
+        hardFailures.push("目标区域看起来并没有发生变化。");
+      }
+      if (targeting.collateralDamage) {
+        hardFailures.push("这次更新误伤了过多非目标区域。");
+      }
+      if (!targeting.intentMatched) {
+        issues.push("目标区域的变化只部分符合你的修改意图。");
+      }
+    }
+  }
+
+  const allIssues = [...hardFailures, ...issues];
+  if (allIssues.length === 0) {
     return {
       status: "pass",
-      summary: "Preview self-check passed.",
+      summary: "预览自检通过。",
       issues: [],
       isRenderable: true,
+      localCheckOnly,
+      escalatedPreviewCheck,
     };
   }
 
   return {
-    status: renderable ? "warn" : "fail",
-    summary: renderable
-      ? "Preview is renderable, but the draft needs attention."
-      : "Preview self-check failed before the draft could be trusted.",
-    issues,
+    status: hardFailures.length > 0 || !renderable ? "fail" : "warn",
+    summary:
+      hardFailures.length > 0 || !renderable
+        ? "预览自检失败，这份草稿暂时不能直接信任。"
+        : renderable
+      ? "预览虽然可以渲染，但这份草稿还需要人工关注。"
+      : "预览自检失败，这份草稿暂时不能直接信任。",
+    issues: allIssues,
     isRenderable: renderable,
+    localCheckOnly,
+    escalatedPreviewCheck,
   };
 }
 
+// 给 DOM 节点生成稳定路径，便于前后版本做轻量结构 diff。
+function buildElementPath(el: Element): string {
+  const segments: string[] = [];
+  let current: Element | null = el;
+  while (current && current.tagName.toLowerCase() !== "html") {
+    const parent: Element | null = current.parentElement;
+    const tag = current.tagName.toLowerCase();
+    const siblings = parent
+      ? Array.from(parent.children).filter(
+          (child): child is Element => child instanceof Element
+        ).filter(
+          (child) => child.tagName.toLowerCase() === tag
+        )
+      : [current];
+    const position = siblings.indexOf(current) + 1;
+    segments.unshift(`${tag}:${position}`);
+    current = parent;
+  }
+  return segments.join(">");
+}
+
+// 把文档压成“路径 -> 摘要”的快照结构，方便比较改动范围。
+function buildElementSnapshot(doc: Document): Map<
+  string,
+  { summary: string; text: string; classes: string }
+> {
+  const elements = Array.from(doc.body?.querySelectorAll("*") || []);
+  return new Map(
+    elements.map((el) => {
+      const path = buildElementPath(el);
+      const summary = elementSummary(el);
+      const text = normalizeText(el.textContent || "").slice(0, 120);
+      const classes = (el.getAttribute("class") || "").trim();
+      return [path, { summary, text, classes }];
+    })
+  );
+}
+
+// 生成一份前后版本的变更摘要，让 UI 能直接展示“这次改了哪”。
+export function buildChangeReport(params: {
+  previousCode?: string;
+  nextCode: string;
+}): AgentChangeReport | null {
+  const previousRenderable = params.previousCode
+    ? splitRenderableOutput(params.previousCode).renderableCode
+    : "";
+  const nextRenderable = splitRenderableOutput(params.nextCode).renderableCode;
+  if (!nextRenderable.trim()) return null;
+
+  const previousDoc = parseHtmlDocument(previousRenderable);
+  const nextDoc = parseHtmlDocument(nextRenderable);
+  if (!nextDoc) {
+    const beforeText = normalizeText(previousRenderable);
+    const afterText = normalizeText(nextRenderable);
+    if (!afterText) return null;
+    const changed = beforeText !== afterText;
+    return {
+      addedNodes: changed && beforeText.length < afterText.length ? 1 : 0,
+      removedNodes: changed && beforeText.length > afterText.length ? 1 : 0,
+      changedNodes: changed ? 1 : 0,
+      totalNodesBefore: beforeText ? 1 : 0,
+      totalNodesAfter: 1,
+      impact: changed ? "medium" : "low",
+      changedRegions: [afterText.slice(0, 120)],
+      summary: changed
+        ? "可渲染结果发生了变化，但 DOM diff 已降级成文本比较。"
+        : "没有检测到明显的结构变化。",
+    };
+  }
+
+  if (!previousDoc) {
+    const totalNodesAfter = nextDoc.body?.querySelectorAll("*").length || 0;
+    return {
+      addedNodes: totalNodesAfter,
+      removedNodes: 0,
+      changedNodes: totalNodesAfter,
+      totalNodesBefore: 0,
+      totalNodesAfter,
+      impact: "high",
+      changedRegions: Array.from(nextDoc.body?.querySelectorAll("*") || [])
+        .slice(0, 5)
+        .map((el) => elementSummary(el))
+        .filter(Boolean),
+      summary: `首次渲染创建了 ${totalNodesAfter} 个节点。`,
+    };
+  }
+
+  const beforeMap = buildElementSnapshot(previousDoc);
+  const afterMap = buildElementSnapshot(nextDoc);
+  const addedPaths = [...afterMap.keys()].filter((path) => !beforeMap.has(path));
+  const removedPaths = [...beforeMap.keys()].filter((path) => !afterMap.has(path));
+  const changedPaths = [...afterMap.keys()].filter((path) => {
+    const before = beforeMap.get(path);
+    const after = afterMap.get(path);
+    return (
+      before &&
+      after &&
+      (before.summary !== after.summary ||
+        before.text !== after.text ||
+        before.classes !== after.classes)
+    );
+  });
+  const totalChanges = addedPaths.length + removedPaths.length + changedPaths.length;
+  const baseline = Math.max(beforeMap.size, afterMap.size, 1);
+  const ratio = totalChanges / baseline;
+  const impact = ratio >= 0.4 ? "high" : ratio >= 0.18 ? "medium" : "low";
+  const changedRegions = [
+    ...changedPaths.map((path) => afterMap.get(path)?.summary || beforeMap.get(path)?.summary || ""),
+    ...addedPaths.map((path) => afterMap.get(path)?.summary || ""),
+    ...removedPaths.map((path) => beforeMap.get(path)?.summary || ""),
+  ]
+    .filter(Boolean)
+    .slice(0, 6);
+
+  return {
+    addedNodes: addedPaths.length,
+    removedNodes: removedPaths.length,
+    changedNodes: changedPaths.length,
+    totalNodesBefore: beforeMap.size,
+    totalNodesAfter: afterMap.size,
+    impact,
+    changedRegions,
+    summary:
+      totalChanges === 0
+        ? "没有检测到明显的结构变化。"
+        : `变更 ${changedPaths.length} 条路径，新增 ${addedPaths.length} 条，删除 ${removedPaths.length} 条。`,
+  };
+}
+
+// 把原始报错文本压缩成稳定分类，便于统计失败分布。
 export function classifyGenerationFailure(errorMessage: string): string {
   const lower = errorMessage.toLowerCase();
   if (lower.includes("timeout") || lower.includes("readtimeout")) {
@@ -485,10 +732,12 @@ export function classifyGenerationFailure(errorMessage: string): string {
   return "generation";
 }
 
+// 统一文本归一化规则，减少比较时被空白和大小写干扰。
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
+// 从文本里提取少量关键词，用于低成本相似度和命中判断。
 function extractTextTokens(value: string, limit = 6): string[] {
   return normalizeText(value)
     .split(/[^a-z0-9\u4e00-\u9fa5]+/i)
@@ -496,6 +745,7 @@ function extractTextTokens(value: string, limit = 6): string[] {
     .slice(0, limit);
 }
 
+// 尽量把字符串解析成 HTML 文档，失败时返回 null 走降级逻辑。
 function parseHtmlDocument(code: string): Document | null {
   if (!code.trim()) return null;
   try {
@@ -514,6 +764,7 @@ function parseHtmlDocument(code: string): Document | null {
   }
 }
 
+// 把元素压成短摘要，方便日志和变更面板展示。
 function elementSummary(el: Element | null): string {
   if (!el) return "";
   const tag = el.tagName.toLowerCase();
@@ -673,7 +924,7 @@ export function evaluateTargetedEdit(params: {
       targetSummary: normalizedTarget.slice(0, 80),
       preserveViolations: preservedOutsideTarget ? [] : params.designUpdateIntent?.preserve,
       changedSignals: changedInsideTarget
-        ? ["HTML changed while keeping the selected target in scope."]
+        ? ["HTML 已变化，同时仍保持在目标区域范围内。"]
         : [],
     };
   }
@@ -704,12 +955,12 @@ export function evaluateTargetedEdit(params: {
   let intentMatched = changedInsideTarget;
   const changedSignals: string[] = [];
   if (changedInsideTarget) {
-    changedSignals.push(`Target changed from "${previousSummary}" to "${nextSummary}".`);
+    changedSignals.push(`目标区域已从「${previousSummary}」变为「${nextSummary}」。`);
   }
   if (normalizedIntent.includes("center") || normalizedIntent.includes("居中")) {
     intentMatched = looksCentered(nextTarget);
     if (intentMatched) {
-      changedSignals.push("Centered alignment markers were found in the updated target.");
+      changedSignals.push("更新后的目标区域里找到了居中对齐信号。");
     }
   } else if (
     normalizedIntent.includes("image") ||
@@ -720,7 +971,7 @@ export function evaluateTargetedEdit(params: {
     const nextImage = nextTarget?.querySelector("img")?.getAttribute("src") || "";
     intentMatched = Boolean(nextImage) && previousImage !== nextImage;
     if (intentMatched) {
-      changedSignals.push("The target image source changed while the target container remained stable.");
+      changedSignals.push("目标图片源已变化，同时目标容器本身保持稳定。");
     }
   }
 

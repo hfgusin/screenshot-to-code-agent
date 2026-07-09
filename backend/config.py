@@ -9,6 +9,9 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", None)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", None)
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", None)
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", None)
+# Optional separate credentials for OpenAI-compatible image generation.
+OPENAI_IMAGE_API_KEY = os.environ.get("OPENAI_IMAGE_API_KEY", None)
+OPENAI_IMAGE_BASE_URL = os.environ.get("OPENAI_IMAGE_BASE_URL", None)
 # OpenAI-compatible image generation model. Defaults to gpt-image-2, but can
 # be pointed at provider-specific image models such as Doubao SeedEdit.
 OPENAI_IMAGE_MODEL = os.environ.get("OPENAI_IMAGE_MODEL", "gpt-image-2")

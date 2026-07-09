@@ -61,6 +61,9 @@ MODIFY_PATTERNS = [
     re.compile(r"(改|调整|修改|优化|重排|替换|保留|居中|移动|缩小|放大|换成|不要|别动)", re.I),
     re.compile(r"(update|modify|refine|reposition|restyle|align|center)", re.I),
 ]
+REFERENCE_PATTERNS = [
+    re.compile(r"(参考|仿照|借鉴|类似|看齐|像.*一样|风格参考|参考图|reference)", re.I),
+]
 CREATE_PATTERNS = [
     re.compile(r"(做|生成|创建|设计|画|build|create|make|generate|design)", re.I),
 ]
@@ -122,6 +125,8 @@ def _collect_signals(
         signals.append("repair")
     if _has_any_match(text, MODIFY_PATTERNS):
         signals.append("modify")
+    if _has_any_match(text, REFERENCE_PATTERNS):
+        signals.append("reference")
     if _has_any_match(text, CREATE_PATTERNS):
         signals.append("create")
     if selected_element_html and selected_element_html.strip():
@@ -222,6 +227,10 @@ def _route_with_rules(params: IntentRouterRequest) -> IntentRouterResponse:
         intent = "repair"
         confidence = 0.9
         reason = "Repair keywords were detected."
+    elif _has_any_match(text, REFERENCE_PATTERNS):
+        intent = "generate" if params.generation_type == "create" else "modify"
+        confidence = 0.81
+        reason = "A reference style was mentioned; the backend will look up supporting context before generating."
     elif has_selection and (
         params.generation_type == "update" or _has_any_match(text, MODIFY_PATTERNS)
     ):
@@ -411,7 +420,7 @@ async def _resolve_llm_intent(request: IntentRouterRequest) -> IntentRouterRespo
 
     response = await client.chat.completions.create(
         model=model,
-        temperature=0,
+        temperature=1,
         max_tokens=300,
         messages=[
             {

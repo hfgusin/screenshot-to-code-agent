@@ -5,7 +5,7 @@ from typing import Iterable, Sequence
 
 from prompts.prompt_types import PromptHistoryMessage
 
-MAX_IMAGE_URLS = 6
+MAX_IMAGE_URLS = 4
 
 _IMG_SRC_RE = re.compile(
     r"""<img\b[^>]*\bsrc=["']([^"']+)["']""",

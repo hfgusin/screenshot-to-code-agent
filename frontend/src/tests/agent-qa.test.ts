@@ -352,6 +352,14 @@ class AgentQaApp {
         this.mode === "live"
           ? process.env.OPENAI_BASE_URL || null
           : "https://example.invalid/v1",
+      openAiImageApiKey:
+        this.mode === "live"
+          ? process.env.OPENAI_IMAGE_API_KEY || null
+          : "test-image-key",
+      openAiImageBaseURL:
+        this.mode === "live"
+          ? process.env.OPENAI_IMAGE_BASE_URL || null
+          : "https://example.invalid/image-v1",
       anthropicApiKey: this.mode === "live" ? process.env.ANTHROPIC_API_KEY || null : null,
       geminiApiKey: this.mode === "live" ? process.env.GEMINI_API_KEY || null : null,
       screenshotOneApiKey: null,

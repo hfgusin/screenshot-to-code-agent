@@ -180,6 +180,14 @@ def parse_design_session(raw_session: object) -> DesignSession:
             parsed[key] = value.strip()
 
     for key, field_name in (
+        ("latestDelta", "latest_delta"),
+        ("sessionSummary", "session_summary"),
+    ):
+        value = session_dict.get(key)
+        if isinstance(value, str) and value.strip():
+            parsed[field_name] = value.strip()
+
+    for key, field_name in (
         ("lastIntent", "last_intent"),
         ("intentConfidence", "intent_confidence"),
         ("intentReason", "intent_reason"),
@@ -202,7 +210,9 @@ def parse_design_session(raw_session: object) -> DesignSession:
         elif field_name == "intent_needs_clarification" and isinstance(value, bool):
             parsed[field_name] = value
 
-    revision_log = session_dict.get("revision_log")
+    revision_log = session_dict.get("revisionLog")
+    if not isinstance(revision_log, list):
+        revision_log = session_dict.get("revision_log")
     if isinstance(revision_log, list):
         normalized = [
             item.strip()

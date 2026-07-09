@@ -66,3 +66,19 @@ def test_llm_payload_normalization_accepts_nested_decision() -> None:
     assert normalized.model == "doubao-seed-2-0-mini-260428"
     assert normalized.structuredUpdateIntent is not None
     assert normalized.structuredUpdateIntent.target == "button group"
+
+
+def test_rule_router_treats_reference_style_as_generate_without_question() -> None:
+    request = IntentRouterRequest.model_validate(
+        {
+            "text": "参考蛋仔派对的可爱风格",
+            "generationType": "create",
+            "currentCode": "",
+        }
+    )
+
+    decision = _route_with_rules(request)
+
+    assert decision.intent == "generate"
+    assert decision.shouldAskQuestion is False
+    assert "reference" in decision.signals

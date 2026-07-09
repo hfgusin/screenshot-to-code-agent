@@ -216,6 +216,8 @@ class App {
     const setting = {
       openAiApiKey: "test-openai-key",
       openAiBaseURL: null,
+      openAiImageApiKey: null,
+      openAiImageBaseURL: null,
       anthropicApiKey: "test-anthropic-key",
       screenshotOneApiKey: "test-screenshotone-key",
       isImageGenerationEnabled: true,

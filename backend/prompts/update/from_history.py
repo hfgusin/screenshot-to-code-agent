@@ -24,7 +24,7 @@ from prompts.prompt_types import (
 )
 from prompts.message_builder import Prompt, build_history_message
 
-MAX_PROMPT_HISTORY_MESSAGES = 6
+MAX_PROMPT_HISTORY_MESSAGES = 5
 
 
 def _compress_history(
@@ -34,13 +34,11 @@ def _compress_history(
     if len(history) <= MAX_PROMPT_HISTORY_MESSAGES:
         return history, 0
 
-    kept_prefix = history[: first_user_index + 1]
+    first_user = history[first_user_index]
     trailing_history = history[first_user_index + 1 :]
-    keep_count = max(0, MAX_PROMPT_HISTORY_MESSAGES - len(kept_prefix))
-    if keep_count <= 0:
-        return kept_prefix, len(history) - len(kept_prefix)
-    kept_tail = trailing_history[-keep_count:]
-    kept = kept_prefix + kept_tail
+    keep_count = max(0, MAX_PROMPT_HISTORY_MESSAGES - 1)
+    kept_tail = trailing_history[-keep_count:] if keep_count > 0 else []
+    kept = [first_user] + kept_tail
     omitted = len(history) - len(kept)
     return kept, omitted
 

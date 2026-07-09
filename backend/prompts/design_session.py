@@ -23,6 +23,17 @@ def _list_section(title: str, items: Iterable[str] | None) -> str:
     return f"## {title}\n{lines}"
 
 
+def build_responsive_design_guidance_block() -> str:
+    return """
+## Responsive design guidance
+- Treat desktop and mobile as first-class viewports, not as one layout scaled down.
+- If the brief looks app-like, design the mobile version like a real app screen: one-column flow, clearer hierarchy, and comfortable touch targets.
+- Preserve the core story across viewports, but do not force desktop columns, dense sidebars, or oversized panels onto narrow screens.
+- On mobile, keep the primary action visible early, shorten headers, collapse secondary content, and avoid horizontal overflow.
+- When desktop and mobile need different structure, adapt the composition explicitly instead of only shrinking spacing.
+""".strip()
+
+
 def build_revision_metadata_block(
     workspace_id: str | None = None,
     revision_id: str | None = None,
@@ -88,14 +99,17 @@ def build_design_session_prompt_block(
         return ""
 
     revision_log = design_session.get("revision_log") or []
+    latest_delta = (design_session.get("latest_delta") or "").strip()
+    session_summary = (design_session.get("session_summary") or "").strip()
     revision_phase = len(revision_log) + 1
     recent_revision_log = revision_log[-MAX_REVISION_LOG_ENTRIES:]
-    omitted_revision_count = max(0, len(revision_log) - len(recent_revision_log))
     parts = [
         _section("Design goal", design_session.get("goal")),
         _section("Constraints", design_session.get("constraints")),
         _section("Style direction", design_session.get("style")),
         _section("References", design_session.get("references")),
+        _section("Latest delta", latest_delta),
+        _section("Session summary", session_summary),
         _section("Last intent", str(design_session.get("last_intent") or "")),
         _section(
             "Intent confidence",
@@ -109,13 +123,6 @@ def build_design_session_prompt_block(
         _section("Review summary", design_session.get("review_summary")),
         _list_section("Recent revision trail", recent_revision_log),
     ]
-    if omitted_revision_count > 0:
-        parts.append(
-            _section(
-                "Earlier revisions",
-                f"{omitted_revision_count} earlier revision(s) were omitted to keep the prompt concise.",
-            )
-        )
     parts = [part for part in parts if part]
     if not parts:
         return ""
@@ -176,6 +183,8 @@ def build_multi_turn_instruction_block(
         "question": "This turn is a clarification turn. Ask one concise question or render a polished clarification screen instead of guessing.",
     }.get(intent, "Preserve the current draft and make the smallest useful delta.")
 
+    responsive_design_block = build_responsive_design_guidance_block()
+
     return f"""
 ## Multi-turn design agent instructions
 
@@ -188,8 +197,10 @@ def build_multi_turn_instruction_block(
 - This is revision phase {revision_phase}. If it is greater than 1, make a visible delta from the previous draft rather than returning a near-identical layout.
 - Ensure the new draft has at least one obvious improvement the user can immediately notice.
 - Include a short self-check in the generated UI: verify layout balance, spacing, and whether the requested change is actually reflected.
+- If the current draft looks acceptable on desktop but weak on mobile, fix the mobile structure explicitly instead of only shrinking the desktop layout.
 - Current turn intent: {intent}
 - {intent_guidance}
+{responsive_design_block}
 
 Current turn:
 {prompt_text}

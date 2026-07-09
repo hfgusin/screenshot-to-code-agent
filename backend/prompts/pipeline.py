@@ -1,6 +1,7 @@
 from custom_types import InputMode
 from prompts.create import build_create_prompt_from_input
 from prompts.design_session import build_design_session_prompt_block
+from prompts.reference_research import maybe_enrich_design_session_with_reference_research
 from prompts.plan import derive_prompt_construction_plan
 from prompts.prompt_types import (
     DesignSession,
@@ -26,12 +27,18 @@ async def build_prompt_messages(
     image_generation_enabled: bool = True,
     design_system: str | None = None,
 ) -> Prompt:
+    enriched_design_session, _reference_research = await maybe_enrich_design_session_with_reference_research(
+        prompt,
+        design_session,
+    )
+
     plan = derive_prompt_construction_plan(
         stack=stack,
         input_mode=input_mode,
         generation_type=generation_type,
         history=history,
         file_state=file_state,
+        prompt=prompt,
     )
 
     strategy = plan["construction_strategy"]
@@ -41,7 +48,7 @@ async def build_prompt_messages(
             history=history,
             image_generation_enabled=image_generation_enabled,
             prompt=prompt,
-            design_session=design_session,
+            design_session=enriched_design_session,
             design_system=design_system,
             intent_decision=prompt.get("intent_decision"),
         )
@@ -52,7 +59,7 @@ async def build_prompt_messages(
             prompt=prompt,
             file_state=file_state,
             image_generation_enabled=image_generation_enabled,
-            design_session=design_session,
+            design_session=enriched_design_session,
             design_system=design_system,
             intent_decision=prompt.get("intent_decision"),
         )
@@ -61,7 +68,7 @@ async def build_prompt_messages(
         stack,
         prompt,
         image_generation_enabled,
-        design_session=design_session,
+        design_session=enriched_design_session,
         design_system=design_system,
         intent_decision=prompt.get("intent_decision"),
     )

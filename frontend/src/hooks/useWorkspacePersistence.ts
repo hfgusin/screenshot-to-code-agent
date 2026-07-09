@@ -74,6 +74,8 @@ function buildSettingsSnapshot(settings: Settings): WorkspaceSettingsSnapshot {
     codeGenerationModel: settings.codeGenerationModel,
     selectedDesignSystemId: settings.selectedDesignSystemId,
     isImageGenerationEnabled: settings.isImageGenerationEnabled,
+    openAiImageApiKey: settings.openAiImageApiKey ?? null,
+    openAiImageBaseURL: settings.openAiImageBaseURL ?? null,
   };
 }
 
@@ -205,6 +207,8 @@ function applyWorkspaceSnapshot(
     codeGenerationModel: restored.data.settings.codeGenerationModel,
     selectedDesignSystemId: restored.data.settings.selectedDesignSystemId,
     isImageGenerationEnabled: restored.data.settings.isImageGenerationEnabled,
+    openAiImageApiKey: restored.data.settings.openAiImageApiKey ?? null,
+    openAiImageBaseURL: restored.data.settings.openAiImageBaseURL ?? null,
   }));
 
   setDesignSession({

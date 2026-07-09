@@ -34,8 +34,12 @@ describe("buildAgentMaturitySummary", () => {
           code: "<!doctype html><html><body>create</body></html>",
           history: [],
           status: "complete",
-          diagnostics: { selfCheckStatus: "pass" },
-          metrics: { durationMs: 4000 },
+          diagnostics: {
+            selfCheckStatus: "pass",
+            localCheckOnly: false,
+            escalatedPreviewCheck: true,
+          },
+          metrics: { durationMs: 4000, promptMetrics: { promptChars: 9000 } },
         },
       ],
     });
@@ -48,8 +52,17 @@ describe("buildAgentMaturitySummary", () => {
           code: "<!doctype html><html><body>edit</body></html>",
           history: [],
           status: "complete",
-          diagnostics: { selfCheckStatus: "pass" },
-          metrics: { durationMs: 2000 },
+          diagnostics: {
+            selfCheckStatus: "pass",
+            promptStrategy: "file_snapshot",
+            localCheckOnly: true,
+            escalatedPreviewCheck: false,
+          },
+          metrics: {
+            durationMs: 2000,
+            promptStrategy: "file_snapshot",
+            promptMetrics: { promptChars: 4200 },
+          },
         },
       ],
       inputs: {
@@ -68,7 +81,7 @@ describe("buildAgentMaturitySummary", () => {
           code: "",
           history: [],
           status: "error",
-          diagnostics: { selfCheckStatus: "fail" },
+          diagnostics: { selfCheckStatus: "fail", promptStrategy: "history" },
         },
       ],
       inputs: {
@@ -92,7 +105,12 @@ describe("buildAgentMaturitySummary", () => {
     expect(summary.rollbackPoints).toBe(2);
     expect(summary.averageCreateDurationMs).toBe(4000);
     expect(summary.averageUpdateDurationMs).toBe(2000);
+    expect(summary.averageCreatePromptChars).toBe(9000);
+    expect(summary.averageUpdatePromptChars).toBe(4200);
     expect(summary.failureRate).toBeCloseTo(1 / 3);
     expect(summary.targetHitRate).toBe(1);
+    expect(summary.fileSnapshotStrategyRate).toBeCloseTo(0.5);
+    expect(summary.localCheckOnlyRate).toBeCloseTo(0.5);
+    expect(summary.escalatedPreviewRate).toBeCloseTo(0.5);
   });
 });

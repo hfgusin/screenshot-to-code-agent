@@ -18,22 +18,64 @@ from prompts.policies import build_selected_stack_policy, build_user_image_polic
 from prompts.prompt_types import DesignSession, IntentDecision, Stack, UserTurnInput
 from prompts.message_builder import Prompt, build_history_message
 
-MAX_FILE_STATE_CHARS = 12000
+MAX_FILE_STATE_CHARS = 9000
+FOCUS_WINDOW_CHARS = 5000
 
 
-def _compress_file_content(content: str) -> str:
+def _find_focus_window(content: str, focus_html: str | None) -> str | None:
+    if not focus_html:
+        return None
+
+    focus = focus_html.strip()
+    if not focus:
+        return None
+
+    index = content.find(focus)
+    if index < 0:
+        compact_focus = " ".join(focus.split())
+        if compact_focus:
+            compact_content = " ".join(content.split())
+            compact_index = compact_content.find(compact_focus)
+            if compact_index < 0:
+                return None
+            return compact_content[
+                max(0, compact_index - FOCUS_WINDOW_CHARS // 2) : compact_index
+                + FOCUS_WINDOW_CHARS // 2
+            ].strip()
+        return None
+
+    start = max(0, index - FOCUS_WINDOW_CHARS // 2)
+    end = min(len(content), index + len(focus) + FOCUS_WINDOW_CHARS // 2)
+    return content[start:end].strip()
+
+
+def _compress_file_content(content: str, focus_html: str | None = None) -> str:
     stripped = content.strip()
     if len(stripped) <= MAX_FILE_STATE_CHARS:
         return stripped
 
-    head_chars = 9000
-    tail_chars = 2500
-    omitted = len(stripped) - (head_chars + tail_chars)
+    focus_window = _find_focus_window(stripped, focus_html)
+    if focus_window and len(focus_window) <= MAX_FILE_STATE_CHARS:
+        return (
+            "<!-- Focused excerpt around the targeted update -->\n"
+            f"{focus_window}"
+        )
+
+    head_chars = 2400
+    tail_chars = 1600
+    middle_budget = max(1200, MAX_FILE_STATE_CHARS - head_chars - tail_chars - 200)
+    middle = ""
+    if focus_window:
+        middle = focus_window[:middle_budget].strip()
+    omitted = len(stripped) - (head_chars + tail_chars + len(middle))
     head = stripped[:head_chars].rstrip()
     tail = stripped[-tail_chars:].lstrip()
-    return (
-        f"{head}\n\n<!-- {omitted} characters omitted for prompt compression -->\n\n{tail}"
+    middle_block = (
+        f"\n\n<!-- Focused excerpt around the targeted update -->\n{middle}"
+        if middle
+        else ""
     )
+    return f"{head}{middle_block}\n\n<!-- {max(0, omitted)} characters omitted for prompt compression -->\n\n{tail}"
 
 
 def build_update_prompt_from_file_snapshot(
@@ -53,7 +95,10 @@ def build_update_prompt_from_file_snapshot(
         or prompt.get("text", "").strip()
         or "Apply the requested update."
     )
-    compressed_content = _compress_file_content(file_state["content"])
+    compressed_content = _compress_file_content(
+        file_state["content"],
+        prompt.get("selected_element_html"),
+    )
     selected_stack = build_selected_stack_policy(stack)
     image_policy = build_user_image_policy(image_generation_enabled)
     design_system_block = build_design_system_prompt_block(design_system)

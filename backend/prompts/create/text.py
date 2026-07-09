@@ -2,6 +2,7 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from prompts.design_session import (
     build_design_session_prompt_block,
+    build_responsive_design_guidance_block,
     build_revision_metadata_block,
 )
 from prompts.prompt_types import DesignSession, IntentDecision, Stack
@@ -26,6 +27,7 @@ def build_text_prompt_messages(
     design_session_block = build_design_session_prompt_block(
         design_session, workspace_id=workspace_id
     )
+    responsive_design_block = build_responsive_design_guidance_block()
     revision_metadata_block = build_revision_metadata_block(
         workspace_id=workspace_id,
         turn_intent=turn_intent,
@@ -37,6 +39,7 @@ Generate UI for {text_prompt}.
 {selected_stack}
 {design_system_block}
 {design_session_block}
+{responsive_design_block}
 {revision_metadata_block}
 
 # Instructions
@@ -47,6 +50,8 @@ Generate UI for {text_prompt}.
 - Return a full renderable HTML document only. Do not put a prose summary, explanation, or plain text in the file content.
 - Prefer a strong first-pass page skeleton over a long explanation. The preview must be something the iframe can render immediately.
 - If the brief is too vague to design confidently, ask one concise clarifying question or create a polished question screen instead of inventing details.
+- If a web reference research block is present, use it as the source of truth for external style details.
+- If the user references an existing product, game, app, or visual style without providing a screenshot or URL, ask for a source image or clearer visual constraints instead of inventing the reference details.
 - Respect the current turn intent when shaping the response: generate = fresh first draft, modify = localized edit, repair = fix the broken part, question = ask a concise clarification or render a question screen.
 - If the intent confidence is low, prefer asking a concise clarification instead of inventing details.
 - Treat the design session as the persistent long-term memory for this task; preserve its goal and style across follow-up turns.

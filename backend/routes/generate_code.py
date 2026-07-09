@@ -1,6 +1,7 @@
 import asyncio
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
+import json
 import time
 import traceback
 from difflib import SequenceMatcher
@@ -17,6 +18,8 @@ from config import (
     NUM_VARIANTS_VIDEO,
     OPENAI_API_KEY,
     OPENAI_BASE_URL,
+    OPENAI_IMAGE_API_KEY,
+    OPENAI_IMAGE_BASE_URL,
     REPLICATE_API_KEY,
 )
 from custom_types import InputMode
@@ -35,6 +38,7 @@ from typing import (
 )
 from openai.types.chat import ChatCompletionMessageParam
 
+from prompts.plan import derive_prompt_construction_plan
 from utils import print_prompt_preview
 
 # WebSocket message types
@@ -81,6 +85,98 @@ from ws.constants import APP_ERROR_WEB_SOCKET_CODE  # type: ignore
 router = APIRouter()
 
 
+# 递归统计任意嵌套对象里的文本长度，用来估算 prompt 体积。
+def _extract_text_length(value: Any) -> int:
+    if isinstance(value, str):
+        return len(value)
+    if isinstance(value, list):
+        return sum(_extract_text_length(item) for item in value)
+    if isinstance(value, dict):
+        return sum(_extract_text_length(item) for item in value.values())
+    return 0
+
+
+# 用一个轻量近似值把字符数换算成 token，便于日志里横向比较。
+def _estimate_prompt_tokens(char_count: int) -> int:
+    return round(char_count / 4) if char_count > 0 else 0
+
+
+# 给 prompt 策略补一个“为什么走这条路”的原因码，方便排查策略命中。
+def _build_prompt_strategy_reason(
+    extracted_params: "ExtractedParams", prompt_strategy: str | None
+) -> str | None:
+    if prompt_strategy == "update_from_file_snapshot":
+        if extracted_params.file_state and extracted_params.file_state.get("content", "").strip():
+            return "file_state_available"
+        return "snapshot_requested"
+    if prompt_strategy == "update_from_history":
+        prompt_text = (
+            extracted_params.prompt.get("full_text")
+            or extracted_params.prompt.get("text")
+            or ""
+        ).lower()
+        history_markers = (
+            "option ",
+            "方案",
+            "选项",
+            "上一版",
+            "前一个版本",
+            "历史版本",
+            "previous version",
+            "earlier version",
+            "another option",
+        )
+        if any(marker in prompt_text for marker in history_markers):
+            return "prompt_mentions_prior_revision"
+        if extracted_params.history:
+            return "history_only_context_available"
+        return "history_requested"
+    if prompt_strategy == "create_from_input":
+        return "fresh_create_request"
+    return None
+
+
+# 汇总 prompt 体积拆分信息，后面前端和后台都直接消费这一份结构。
+def _build_prompt_metrics(
+    extracted_params: "ExtractedParams",
+    prompt_messages: List[ChatCompletionMessageParam],
+) -> Dict[str, int]:
+    prompt_chars = sum(_extract_text_length(message) for message in prompt_messages)
+    history_chars = sum(len(item.get("text", "")) for item in extracted_params.history)
+    image_asset_count = len(extracted_params.prompt.get("images", [])) + sum(
+        len(item.get("images", [])) for item in extracted_params.history
+    )
+    return {
+        "promptChars": prompt_chars,
+        "promptMessages": len(prompt_messages),
+        "estimatedTokens": _estimate_prompt_tokens(prompt_chars),
+        "fileSnapshotChars": len(extracted_params.file_state.get("content", ""))
+        if extracted_params.file_state
+        else 0,
+        "designSessionChars": _extract_text_length(extracted_params.design_session),
+        "historyMessageCount": len(extracted_params.history),
+        "historyChars": history_chars,
+        "imageAssetCount": image_asset_count,
+        "selectedElementChars": len(
+            extracted_params.prompt.get("selected_element_html", "")
+        ),
+    }
+
+
+# 统一输出结构化后台日志，避免后续只能靠零散 print 排查。
+def _emit_backend_log(event: str, payload: Dict[str, Any]) -> None:
+    print(
+        json.dumps(
+            {
+                "event": event,
+                **payload,
+            },
+            ensure_ascii=True,
+            default=str,
+        )
+    )
+
+
 @dataclass
 class PipelineContext:
     """Context object that carries state through the pipeline"""
@@ -96,11 +192,13 @@ class PipelineContext:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     @property
+    # 给中间件暴露统一的消息发送入口，避免层层透传 ws 对象。
     def send_message(self):
         assert self.ws_comm is not None
         return self.ws_comm.send_message
 
     @property
+    # 给中间件暴露统一的错误抛出入口，保持 websocket 关闭逻辑一致。
     def throw_error(self):
         assert self.ws_comm is not None
         return self.ws_comm.throw_error
@@ -123,11 +221,13 @@ class Pipeline:
     def __init__(self):
         self.middlewares: List[Middleware] = []
 
+    # 按注册顺序挂载中间件，形成一条固定的处理链。
     def use(self, middleware: Middleware) -> "Pipeline":
         """Add a middleware to the pipeline"""
         self.middlewares.append(middleware)
         return self
 
+    # 执行整条 websocket 生成流水线，并在内部串联所有中间件。
     async def execute(self, websocket: WebSocket) -> None:
         """Execute the pipeline with the given WebSocket"""
         context = PipelineContext(websocket=websocket)
@@ -142,6 +242,7 @@ class Pipeline:
 
         await chain(context)
 
+    # 把单个中间件包进 next 调用模式，形成类似 koa 的链式执行。
     def _wrap_middleware(
         self,
         middleware: Middleware,
@@ -238,6 +339,8 @@ class ExtractedParams:
     anthropic_api_key: str | None
     gemini_api_key: str | None
     openai_base_url: str | None
+    openai_image_api_key: str | None
+    openai_image_base_url: str | None
     generation_type: Literal["create", "update"]
     prompt: UserTurnInput
     history: List[PromptHistoryMessage]
@@ -303,6 +406,20 @@ class ParameterExtractionStage:
         if not openai_base_url:
             print("Using official OpenAI URL")
 
+        openai_image_api_key = self._get_from_settings_dialog_or_env(
+            params, "openAiImageApiKey", OPENAI_IMAGE_API_KEY
+        )
+        if not openai_image_api_key:
+            openai_image_api_key = openai_api_key
+
+        openai_image_base_url: str | None = None
+        if not IS_PROD:
+            openai_image_base_url = self._get_from_settings_dialog_or_env(
+                params, "openAiImageBaseURL", OPENAI_IMAGE_BASE_URL
+            )
+        if not openai_image_base_url:
+            openai_image_base_url = openai_base_url
+
         # Get the image generation flag from the request. Fall back to True if not provided.
         should_generate_images = bool(params.get("isImageGenerationEnabled", True))
 
@@ -360,6 +477,8 @@ class ParameterExtractionStage:
             anthropic_api_key=anthropic_api_key,
             gemini_api_key=gemini_api_key,
             openai_base_url=openai_base_url,
+            openai_image_api_key=openai_image_api_key,
+            openai_image_base_url=openai_image_base_url,
             generation_type=generation_type,
             prompt=prompt,
             history=history,
@@ -530,6 +649,8 @@ class AgenticGenerationStage:
         send_message: Callable[[MessageType, str | None, int, Dict[str, Any] | None, str | None], Coroutine[Any, Any, None]],
         openai_api_key: str | None,
         openai_base_url: str | None,
+        openai_image_api_key: str | None,
+        openai_image_base_url: str | None,
         anthropic_api_key: str | None,
         gemini_api_key: str | None,
         should_generate_images: bool,
@@ -539,10 +660,18 @@ class AgenticGenerationStage:
         option_codes: List[str] | None,
         request_parse_ms: int = 0,
         prompt_build_ms: int = 0,
+        prompt_strategy: str | None = None,
+        prompt_strategy_reason: str | None = None,
+        prompt_metrics: Dict[str, Any] | None = None,
+        run_id: str | None = None,
+        workspace_id: str | None = None,
+        revision_id: str | None = None,
     ):
         self.send_message = send_message
         self.openai_api_key = openai_api_key
         self.openai_base_url = openai_base_url
+        self.openai_image_api_key = openai_image_api_key
+        self.openai_image_base_url = openai_image_base_url
         self.anthropic_api_key = anthropic_api_key
         self.gemini_api_key = gemini_api_key
         self.should_generate_images = should_generate_images
@@ -552,12 +681,56 @@ class AgenticGenerationStage:
         self.option_codes = option_codes or []
         self.request_parse_ms = request_parse_ms
         self.prompt_build_ms = prompt_build_ms
+        self.prompt_strategy = prompt_strategy
+        self.prompt_strategy_reason = prompt_strategy_reason
+        self.prompt_metrics = prompt_metrics or {}
+        self.run_id = run_id
+        self.workspace_id = workspace_id
+        self.revision_id = revision_id
+
+    # 把后端内部策略名映射成前端更容易展示的短标签。
+    def _prompt_strategy_label(self) -> str | None:
+        if self.prompt_strategy == "update_from_file_snapshot":
+            return "file_snapshot"
+        if self.prompt_strategy == "update_from_history":
+            return "history"
+        return None
+
+    # 为每个 variant 输出统一结构化日志，方便按 run/revision 回放。
+    def _emit_variant_log(
+        self,
+        event: str,
+        *,
+        index: int,
+        model: Llm,
+        duration_ms: int,
+        failure_stage: str | None,
+        preview_escalation_reason: str | None = None,
+    ) -> None:
+        _emit_backend_log(
+            event,
+            {
+                "workspaceId": self.workspace_id or "n/a",
+                "runId": self.run_id or "n/a",
+                "revisionId": self.revision_id or "n/a",
+                "variantIndex": index,
+                "model": model.value,
+                "promptStrategy": self._prompt_strategy_label(),
+                "promptStrategyReason": self.prompt_strategy_reason,
+                "promptMetrics": self.prompt_metrics,
+                "failureStage": failure_stage,
+                "previewEscalationReason": preview_escalation_reason,
+                "durationMs": duration_ms,
+            },
+        )
 
     @staticmethod
+    # 去掉代码里的空白差异，避免“看起来不同其实没变”的误判。
     def _normalize_code(code: str) -> str:
         return "".join(code.split())
 
     @classmethod
+    # 判断这次 update 是否真的和旧稿有可见差异，用于触发重试。
     def _is_visibly_different(cls, candidate: str, baseline: str) -> bool:
         normalized_candidate = cls._normalize_code(candidate)
         normalized_baseline = cls._normalize_code(baseline)
@@ -571,6 +744,7 @@ class AgenticGenerationStage:
         return similarity < 0.98
 
     @staticmethod
+    # 把底层异常归并成更稳定的失败阶段标签，方便聚合统计。
     def _classify_error_message(error: Exception) -> str:
         message = str(error).lower()
         if isinstance(error, asyncio.TimeoutError) or "timeout" in message:
@@ -585,6 +759,7 @@ class AgenticGenerationStage:
             return "tool_runtime"
         return "generation"
 
+    # 并发跑所有 variant，并把成功结果收敛成统一字典返回。
     async def process_variants(
         self,
         variant_models: List[Llm],
@@ -609,6 +784,7 @@ class AgenticGenerationStage:
 
         return variant_completions
 
+    # 执行单个 variant 的完整生成流程，并在必要时做“差异不够大”的重试。
     async def _run_variant(
         self,
         index: int,
@@ -637,6 +813,8 @@ class AgenticGenerationStage:
                 variant_index=index,
                 openai_api_key=self.openai_api_key,
                 openai_base_url=self.openai_base_url,
+                openai_image_api_key=self.openai_image_api_key,
+                openai_image_base_url=self.openai_image_base_url,
                 anthropic_api_key=self.anthropic_api_key,
                 gemini_api_key=self.gemini_api_key,
                 should_generate_images=self.should_generate_images,
@@ -671,6 +849,8 @@ class AgenticGenerationStage:
                     variant_index=index,
                     openai_api_key=self.openai_api_key,
                     openai_base_url=self.openai_base_url,
+                    openai_image_api_key=self.openai_image_api_key,
+                    openai_image_base_url=self.openai_image_base_url,
                     anthropic_api_key=self.anthropic_api_key,
                     gemini_api_key=self.gemini_api_key,
                     should_generate_images=self.should_generate_images,
@@ -700,11 +880,21 @@ class AgenticGenerationStage:
                 None,
                 index,
                 {
+                    "promptStrategy": self._prompt_strategy_label(),
+                    "promptStrategyReason": self.prompt_strategy_reason,
+                    "promptMetrics": self.prompt_metrics,
                     "stageTimings": stage_timings,
                     "imageUpdateStatus": latest_image_update,
                     "failureStage": None,
                 },
                 None,
+            )
+            self._emit_variant_log(
+                "generation_result",
+                index=index,
+                model=model,
+                duration_ms=duration_ms,
+                failure_stage=None,
             )
             print(
                 f"[VARIANT {index + 1}] completed model={model.value} duration_ms={duration_ms}"
@@ -733,6 +923,9 @@ class AgenticGenerationStage:
                 None,
                 index,
                 {
+                    "promptStrategy": self._prompt_strategy_label(),
+                    "promptStrategyReason": self.prompt_strategy_reason,
+                    "promptMetrics": self.prompt_metrics,
                     "stageTimings": {
                         "requestParseMs": self.request_parse_ms,
                         "promptBuildMs": self.prompt_build_ms,
@@ -743,6 +936,13 @@ class AgenticGenerationStage:
                     "failureStage": "model_selection",
                 },
                 None,
+            )
+            self._emit_variant_log(
+                "generation_result",
+                index=index,
+                model=model,
+                duration_ms=round((time.perf_counter() - started_at) * 1000),
+                failure_stage="model_selection",
             )
             await self.send_message("variantError", error_message, index, None, None)
             return ""
@@ -764,6 +964,9 @@ class AgenticGenerationStage:
                 None,
                 index,
                 {
+                    "promptStrategy": self._prompt_strategy_label(),
+                    "promptStrategyReason": self.prompt_strategy_reason,
+                    "promptMetrics": self.prompt_metrics,
                     "stageTimings": {
                         "requestParseMs": self.request_parse_ms,
                         "promptBuildMs": self.prompt_build_ms,
@@ -774,6 +977,13 @@ class AgenticGenerationStage:
                     "failureStage": "model_selection",
                 },
                 None,
+            )
+            self._emit_variant_log(
+                "generation_result",
+                index=index,
+                model=model,
+                duration_ms=round((time.perf_counter() - started_at) * 1000),
+                failure_stage="model_selection",
             )
             await self.send_message("variantError", error_message, index, None, None)
             return ""
@@ -792,6 +1002,9 @@ class AgenticGenerationStage:
                 None,
                 index,
                 {
+                    "promptStrategy": self._prompt_strategy_label(),
+                    "promptStrategyReason": self.prompt_strategy_reason,
+                    "promptMetrics": self.prompt_metrics,
                     "stageTimings": {
                         "requestParseMs": self.request_parse_ms,
                         "promptBuildMs": self.prompt_build_ms,
@@ -802,6 +1015,13 @@ class AgenticGenerationStage:
                     "failureStage": "generation",
                 },
                 None,
+            )
+            self._emit_variant_log(
+                "generation_result",
+                index=index,
+                model=model,
+                duration_ms=round((time.perf_counter() - started_at) * 1000),
+                failure_stage="generation",
             )
             await self.send_message("variantError", error_message, index, None, None)
             return ""
@@ -814,6 +1034,9 @@ class AgenticGenerationStage:
                 None,
                 index,
                 {
+                    "promptStrategy": self._prompt_strategy_label(),
+                    "promptStrategyReason": self.prompt_strategy_reason,
+                    "promptMetrics": self.prompt_metrics,
                     "stageTimings": {
                         "requestParseMs": self.request_parse_ms,
                         "promptBuildMs": self.prompt_build_ms,
@@ -824,6 +1047,13 @@ class AgenticGenerationStage:
                     "failureStage": stage,
                 },
                 None,
+            )
+            self._emit_variant_log(
+                "generation_result",
+                index=index,
+                model=model,
+                duration_ms=round((time.perf_counter() - started_at) * 1000),
+                failure_stage=stage,
             )
             await self.send_message(
                 "variantError",
@@ -858,6 +1088,7 @@ class WebSocketSetupMiddleware(Middleware):
 class ParameterExtractionMiddleware(Middleware):
     """Handles parameter extraction and validation"""
 
+    # 解析前端请求参数并记录基础 trace，作为整条流水线的起点。
     async def process(
         self, context: PipelineContext, next_func: Callable[[], Awaitable[None]]
     ) -> None:
@@ -894,6 +1125,7 @@ class ParameterExtractionMiddleware(Middleware):
 class StatusBroadcastMiddleware(Middleware):
     """Sends initial status messages to all variants"""
 
+    # 在真正生成前先把 variant 数量和初始状态广播给前端。
     async def process(
         self, context: PipelineContext, next_func: Callable[[], Awaitable[None]]
     ) -> None:
@@ -916,17 +1148,47 @@ class StatusBroadcastMiddleware(Middleware):
 class PromptCreationMiddleware(Middleware):
     """Handles prompt creation"""
 
+    # 构造 prompt，并把策略、原因和体积拆分都记录进 diagnostics。
     async def process(
         self, context: PipelineContext, next_func: Callable[[], Awaitable[None]]
     ) -> None:
         context.metadata["prompt_started_at"] = time.perf_counter()
-        prompt_creator = PromptCreationStage(context.throw_error)
         assert context.extracted_params is not None
+        prompt_plan = derive_prompt_construction_plan(
+            stack=context.extracted_params.stack,
+            input_mode=context.extracted_params.input_mode,
+            generation_type=context.extracted_params.generation_type,
+            history=context.extracted_params.history,
+            file_state=context.extracted_params.file_state,
+            prompt=context.extracted_params.prompt,
+        )
+        context.metadata["prompt_strategy"] = prompt_plan["construction_strategy"]
+        context.metadata["prompt_strategy_reason"] = _build_prompt_strategy_reason(
+            context.extracted_params, prompt_plan["construction_strategy"]
+        )
+        prompt_creator = PromptCreationStage(context.throw_error)
         context.prompt_messages = await prompt_creator.build_prompt_messages(
             context.extracted_params,
         )
+        context.metadata["prompt_metrics"] = _build_prompt_metrics(
+            context.extracted_params, context.prompt_messages
+        )
         context.metadata["prompt_duration_ms"] = round(
             (time.perf_counter() - context.metadata["prompt_started_at"]) * 1000
+        )
+        _emit_backend_log(
+            "prompt_build",
+            {
+                "workspaceId": context.extracted_params.workspace_id or "n/a",
+                "runId": context.extracted_params.run_id or "n/a",
+                "revisionId": context.extracted_params.prompt.get("revision_id")
+                or "n/a",
+                "generationType": context.extracted_params.generation_type,
+                "promptStrategy": context.metadata.get("prompt_strategy"),
+                "promptStrategyReason": context.metadata.get("prompt_strategy_reason"),
+                "promptMetrics": context.metadata.get("prompt_metrics"),
+                "durationMs": context.metadata.get("prompt_duration_ms"),
+            },
         )
         await next_func()
 
@@ -934,6 +1196,7 @@ class PromptCreationMiddleware(Middleware):
 class CodeGenerationMiddleware(Middleware):
     """Handles the main code generation logic"""
 
+    # 选模型、跑生成，并把整轮结果和耗时沉淀到统一观测字段。
     async def process(
         self, context: PipelineContext, next_func: Callable[[], Awaitable[None]]
     ) -> None:
@@ -972,6 +1235,8 @@ class CodeGenerationMiddleware(Middleware):
                 send_message=context.send_message,
                 openai_api_key=context.extracted_params.openai_api_key,
                 openai_base_url=context.extracted_params.openai_base_url,
+                openai_image_api_key=context.extracted_params.openai_image_api_key,
+                openai_image_base_url=context.extracted_params.openai_image_base_url,
                 anthropic_api_key=context.extracted_params.anthropic_api_key,
                 gemini_api_key=context.extracted_params.gemini_api_key,
                 should_generate_images=context.extracted_params.should_generate_images,
@@ -981,6 +1246,18 @@ class CodeGenerationMiddleware(Middleware):
                 option_codes=context.extracted_params.option_codes,
                 request_parse_ms=int(context.metadata.get("request_parse_ms", 0)),
                 prompt_build_ms=int(context.metadata.get("prompt_duration_ms", 0)),
+                prompt_strategy=cast(str | None, context.metadata.get("prompt_strategy")),
+                prompt_strategy_reason=cast(
+                    str | None, context.metadata.get("prompt_strategy_reason")
+                ),
+                prompt_metrics=cast(
+                    Dict[str, Any] | None, context.metadata.get("prompt_metrics")
+                ),
+                run_id=context.extracted_params.run_id,
+                workspace_id=context.extracted_params.workspace_id,
+                revision_id=cast(
+                    str | None, context.extracted_params.prompt.get("revision_id")
+                ),
             )
 
             context.variant_completions = await generation_stage.process_variants(

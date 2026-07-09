@@ -41,6 +41,8 @@ class DesignSession(TypedDict, total=False):
     constraints: str
     style: str
     references: str
+    latest_delta: str
+    session_summary: str
     revision_log: List[str]
     last_intent: "TurnIntent"
     intent_confidence: float

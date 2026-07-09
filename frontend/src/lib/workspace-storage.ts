@@ -27,6 +27,8 @@ export interface WorkspaceSettingsSnapshot {
   codeGenerationModel: CodeGenerationModel;
   selectedDesignSystemId: string | null;
   isImageGenerationEnabled: boolean;
+  openAiImageApiKey?: Settings["openAiImageApiKey"];
+  openAiImageBaseURL?: Settings["openAiImageBaseURL"];
 }
 
 export interface WorkspaceAppSnapshot {

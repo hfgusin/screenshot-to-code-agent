@@ -10,7 +10,7 @@ sys.modules["moviepy.editor"] = MagicMock()
 
 from prompts.pipeline import build_prompt_messages
 from prompts.plan import derive_prompt_construction_plan
-from prompts.prompt_types import Stack
+from prompts.prompt_types import PromptHistoryMessage, Stack
 
 # Type definitions for test structures
 class ExpectedResult(TypedDict):
@@ -86,6 +86,14 @@ class TestCreatePrompt:
         "Image generation is enabled for this request. Use generate_images for "
         "missing assets when needed."
     )
+    RESPONSIVE_DESIGN_POLICY: str = (
+        "## Responsive design guidance\n"
+        "- Treat desktop and mobile as first-class viewports, not as one layout scaled down.\n"
+        "- If the brief looks app-like, design the mobile version like a real app screen: one-column flow, clearer hierarchy, and comfortable touch targets.\n"
+        "- Preserve the core story across viewports, but do not force desktop columns, dense sidebars, or oversized panels onto narrow screens.\n"
+        "- On mobile, keep the primary action visible early, shorten headers, collapse secondary content, and avoid horizontal overflow.\n"
+        "- When desktop and mobile need different structure, adapt the composition explicitly instead of only shrinking spacing."
+    )
 
     @staticmethod
     def wrapped_file(content: str) -> str:
@@ -131,6 +139,7 @@ class TestCreatePrompt:
         assert "## Design system" in text
         assert "Reuse .mockup-frame" in text
         assert "Workspace ID: workspace-123" in text
+        assert "Treat desktop and mobile as first-class viewports" in text
 
     @pytest.mark.asyncio
     async def test_update_prompt_includes_design_session_when_present(
@@ -196,6 +205,7 @@ class TestCreatePrompt:
         assert "Current turn:" in user_content
         assert "Turn intent: modify" in user_content
         assert "Intent confidence: 0.90" in user_content
+        assert "Treat desktop and mobile as first-class viewports" in user_content
 
     @pytest.mark.asyncio
     async def test_update_prompt_highlights_image_assets_from_history(
@@ -251,6 +261,28 @@ class TestCreatePrompt:
         )
         assert plan["construction_strategy"] == "update_from_history"
 
+    def test_plan_update_prefers_file_snapshot_when_available(self) -> None:
+        plan = derive_prompt_construction_plan(
+            stack=self.TEST_STACK,
+            input_mode="image",
+            generation_type="update",
+            history=[{"role": "user", "text": "change", "images": [], "videos": []}],
+            file_state={"path": "index.html", "content": "<html></html>"},
+            prompt={"text": "Tighten spacing", "images": [], "videos": []},
+        )
+        assert plan["construction_strategy"] == "update_from_file_snapshot"
+
+    def test_plan_update_uses_history_for_option_references(self) -> None:
+        plan = derive_prompt_construction_plan(
+            stack=self.TEST_STACK,
+            input_mode="image",
+            generation_type="update",
+            history=[{"role": "user", "text": "change", "images": [], "videos": []}],
+            file_state={"path": "index.html", "content": "<html></html>"},
+            prompt={"text": "Use option 2 instead", "images": [], "videos": []},
+        )
+        assert plan["construction_strategy"] == "update_from_history"
+
     def test_plan_update_without_history_uses_file_snapshot_strategy(self) -> None:
         plan = derive_prompt_construction_plan(
             stack=self.TEST_STACK,
@@ -263,7 +295,7 @@ class TestCreatePrompt:
 
     @pytest.mark.asyncio
     async def test_update_prompt_compresses_long_history(self) -> None:
-        history = [
+        history: list[dict[str, Any]] = [
             {
                 "role": "user",
                 "text": "Make a landing page with a hero, feature grid, and testimonials.",
@@ -289,16 +321,20 @@ class TestCreatePrompt:
             }
         )
 
+        history_for_prompt = cast(list[PromptHistoryMessage], history)
+
         messages = await build_prompt_messages(
             stack=self.TEST_STACK,
             input_mode="text",
             generation_type="update",
             prompt={"text": "", "images": [], "videos": []},
-            history=history,
+            history=history_for_prompt,
             image_generation_enabled=True,
             design_session={
                 "goal": "Create a polished landing page",
                 "revision_log": [f"Revision {i}" for i in range(8)],
+                "session_summary": "Earlier revisions were compressed.",
+                "latest_delta": "Update: tighten spacing.",
             },
         )
 
@@ -320,7 +356,8 @@ class TestCreatePrompt:
         assert "turn 1" not in combined_user_text
         assert "turn 2" not in combined_user_text
         assert "Revision 7" in combined_user_text
-        assert "Earlier revisions" in combined_user_text
+        assert "Earlier revisions were compressed." in combined_user_text
+        assert "Latest delta" in combined_user_text
 
     @pytest.mark.asyncio
     async def test_image_mode_create_single_image(self) -> None:
@@ -447,14 +484,14 @@ class TestCreatePrompt:
                         "role": "assistant",
                         "content": self.wrapped_file("<html>Initial code</html>"),
                     },
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Selected stack: {self.TEST_STACK}.\n\n"
-                            f"{self.ENABLED_IMAGE_POLICY}\n\n"
-                            "Make the background blue"
-                        ),
-                    },
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Selected stack: {self.TEST_STACK}.\n\n"
+                                f"{self.ENABLED_IMAGE_POLICY}\n\n"
+                                "Make the background blue"
+                            ),
+                        },
                     {
                         "role": "assistant",
                         "content": self.wrapped_file("<html>Updated code</html>"),

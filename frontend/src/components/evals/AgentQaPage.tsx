@@ -95,6 +95,9 @@ function aggregateWorkspaceMetrics(workspaces: WorkspaceMetricsSnapshot[]) {
       targetHitRate: 0,
       previewPassRate: 0,
       imageUpdateSuccessRate: 0,
+      fileSnapshotStrategyRate: 0,
+      localCheckOnlyRate: 0,
+      averageUpdatePromptChars: null as number | null,
       avgCreate: null as number | null,
       avgUpdate: null as number | null,
       totalTurns: 0,
@@ -106,6 +109,11 @@ function aggregateWorkspaceMetrics(workspaces: WorkspaceMetricsSnapshot[]) {
       acc.targetHitRate += workspace.summary.targetHitRate;
       acc.previewPassRate += workspace.summary.previewPassRate;
       acc.imageUpdateSuccessRate += workspace.summary.imageUpdateSuccessRate;
+      acc.fileSnapshotStrategyRate += workspace.summary.fileSnapshotStrategyRate;
+      acc.localCheckOnlyRate += workspace.summary.localCheckOnlyRate;
+      if (workspace.summary.averageUpdatePromptChars !== null) {
+        acc.updatePromptChars.push(workspace.summary.averageUpdatePromptChars);
+      }
       acc.totalTurns += workspace.summary.totalTurns;
       if (workspace.summary.averageCreateDurationMs !== null) {
         acc.createDurations.push(workspace.summary.averageCreateDurationMs);
@@ -119,6 +127,9 @@ function aggregateWorkspaceMetrics(workspaces: WorkspaceMetricsSnapshot[]) {
       targetHitRate: 0,
       previewPassRate: 0,
       imageUpdateSuccessRate: 0,
+      fileSnapshotStrategyRate: 0,
+      localCheckOnlyRate: 0,
+      updatePromptChars: [] as number[],
       totalTurns: 0,
       createDurations: [] as number[],
       updateDurations: [] as number[],
@@ -134,6 +145,10 @@ function aggregateWorkspaceMetrics(workspaces: WorkspaceMetricsSnapshot[]) {
     targetHitRate: totals.targetHitRate / workspaces.length,
     previewPassRate: totals.previewPassRate / workspaces.length,
     imageUpdateSuccessRate: totals.imageUpdateSuccessRate / workspaces.length,
+    fileSnapshotStrategyRate:
+      totals.fileSnapshotStrategyRate / workspaces.length,
+    localCheckOnlyRate: totals.localCheckOnlyRate / workspaces.length,
+    averageUpdatePromptChars: average(totals.updatePromptChars),
     avgCreate: average(totals.createDurations),
     avgUpdate: average(totals.updateDurations),
     totalTurns: totals.totalTurns,
@@ -152,7 +167,7 @@ function AgentQaPage() {
       try {
         const response = await fetch(`${HTTP_BACKEND_URL}/agent-qa/runs`);
         if (!response.ok) {
-          throw new Error("Failed to load Agent QA runs.");
+          throw new Error("加载 Agent QA 运行记录失败。");
         }
         const payload = (await response.json()) as AgentQaRunListResponse;
         setRuns(payload.runs);
@@ -168,7 +183,7 @@ function AgentQaPage() {
         }
       } catch (nextError) {
         console.error(nextError);
-        setError("Could not load Agent QA artifacts.");
+        setError("无法加载 Agent QA 产物。");
       }
     }
 
@@ -208,35 +223,54 @@ function AgentQaPage() {
     <div className="min-h-screen bg-black text-white">
       <EvalNavigation />
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-6 py-6">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
           <MetricCard
-            label="Latest live run"
+            label="最近一次线上运行"
             value={
               latestRunSummary
                 ? `${latestRunSummary.passed_cases}/${latestRunSummary.total_cases}`
                 : "--"
             }
-            helper={selectedRun ? `${selectedRun.mode} · ${formatTimestamp(selectedRun.created_at)}` : "No runs yet"}
+            helper={selectedRun ? `${selectedRun.mode} · ${formatTimestamp(selectedRun.created_at)}` : "暂无运行记录"}
           />
           <MetricCard
-            label="Workspace hit rate"
+            label="Workspace 命中率"
             value={formatRate(workspaceSummary.targetHitRate)}
-            helper={`${workspaceMetrics.length} recent workspaces`}
+            helper={`最近 ${workspaceMetrics.length} 个 workspace`}
           />
           <MetricCard
-            label="Preview pass"
+            label="预览通过率"
             value={formatRate(workspaceSummary.previewPassRate)}
-            helper={`Across ${workspaceSummary.totalTurns} turns`}
+            helper={`覆盖 ${workspaceSummary.totalTurns} 个回合`}
           />
           <MetricCard
-            label="Image edit success"
+            label="图片编辑成功率"
             value={formatRate(workspaceSummary.imageUpdateSuccessRate)}
-            helper="Recent workspace revisions"
+            helper="最近 workspace 修订"
           />
           <MetricCard
-            label="P95 update"
+            label="快照策略占比"
+            value={formatRate(workspaceSummary.fileSnapshotStrategyRate)}
+            helper="update 回合里使用 file snapshot 的比例"
+          />
+          <MetricCard
+            label="仅本地检查"
+            value={formatRate(workspaceSummary.localCheckOnlyRate)}
+            helper="未升级重型预览审查的回合"
+          />
+          <MetricCard
+            label="平均 update prompt"
+            value={
+              workspaceSummary.averageUpdatePromptChars !== null
+                ? `${Math.round(workspaceSummary.averageUpdatePromptChars)} ch`
+                : "--"
+            }
+            helper="最近 update 的 prompt 体积"
+          />
+          <MetricCard
+            label="P95 update 耗时"
             value={formatDuration(latestRunSummary?.p95_duration_ms ?? workspaceSummary.avgUpdate)}
-            helper="From latest QA run or recent workspaces"
+            helper="取最近 QA 运行或最近 workspace"
           />
         </div>
 
@@ -250,10 +284,10 @@ function AgentQaPage() {
           <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4">
             <div className="mb-3">
               <div className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                Agent QA Runs
+                Agent QA 运行记录
               </div>
               <div className="mt-1 text-sm text-zinc-400">
-                {artifactsDirectory || "No artifacts directory found."}
+                {artifactsDirectory || "未找到产物目录。"}
               </div>
             </div>
             <div className="space-y-2">
@@ -284,7 +318,7 @@ function AgentQaPage() {
                     {formatTimestamp(run.created_at)}
                   </div>
                   <div className="mt-2 text-xs text-zinc-300">
-                    {run.passed_cases}/{run.total_cases} passed · {formatDuration(run.duration_ms)}
+                    通过 {run.passed_cases}/{run.total_cases} · {formatDuration(run.duration_ms)}
                   </div>
                 </button>
               ))}
@@ -296,10 +330,10 @@ function AgentQaPage() {
               <div className="mb-4 flex items-center justify-between">
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                    Latest Run Detail
+                    最近运行详情
                   </div>
                   <div className="mt-1 text-sm text-zinc-300">
-                    {selectedRun ? `${selectedRun.run_id} · ${formatTimestamp(selectedRun.created_at)}` : "No run selected"}
+                    {selectedRun ? `${selectedRun.run_id} · ${formatTimestamp(selectedRun.created_at)}` : "尚未选择运行记录"}
                   </div>
                 </div>
                 {latestRunSummary && (
@@ -324,7 +358,7 @@ function AgentQaPage() {
                             : "bg-rose-950 text-rose-300"
                         }`}
                       >
-                        {result.pass ? "pass" : "fail"}
+                        {result.pass ? "通过" : "失败"}
                       </span>
                     </div>
                     <div className="mt-1 text-xs text-zinc-400">
@@ -342,13 +376,13 @@ function AgentQaPage() {
                       </div>
                     )}
                   </div>
-                )) || <div className="text-sm text-zinc-400">No run details yet.</div>}
+                )) || <div className="text-sm text-zinc-400">暂无运行详情。</div>}
               </div>
             </div>
 
             <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4">
               <div className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                Recent Workspace Metrics
+                最近 Workspace 指标
               </div>
               <div className="space-y-2">
                 {workspaceMetrics.map((workspace) => (
@@ -358,10 +392,10 @@ function AgentQaPage() {
                   >
                     <div className="text-sm font-medium text-zinc-100">{workspace.title}</div>
                     <div className="mt-1 flex flex-wrap gap-2 text-xs text-zinc-400">
-                      <span>Hit {formatRate(workspace.summary.targetHitRate)}</span>
-                      <span>Preview {formatRate(workspace.summary.previewPassRate)}</span>
-                      <span>Image {formatRate(workspace.summary.imageUpdateSuccessRate)}</span>
-                      <span>Turns {workspace.summary.totalTurns}</span>
+                      <span>命中 {formatRate(workspace.summary.targetHitRate)}</span>
+                      <span>预览 {formatRate(workspace.summary.previewPassRate)}</span>
+                      <span>图片 {formatRate(workspace.summary.imageUpdateSuccessRate)}</span>
+                      <span>回合 {workspace.summary.totalTurns}</span>
                     </div>
                   </div>
                 ))}
@@ -370,7 +404,7 @@ function AgentQaPage() {
 
             <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4">
               <div className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                Prompt Reports
+                Prompt 报告
               </div>
               <div className="space-y-2 text-sm text-zinc-300">
                 {selectedRun?.prompt_reports?.length ? (
@@ -388,7 +422,7 @@ function AgentQaPage() {
                     </div>
                   ))
                 ) : (
-                  <div className="text-zinc-500">No prompt reports captured for the selected run.</div>
+                  <div className="text-zinc-500">当前运行还没有记录 prompt 报告。</div>
                 )}
               </div>
             </div>

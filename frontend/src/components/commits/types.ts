@@ -1,6 +1,9 @@
 import { PromptContent, PromptMessageRole } from "../../types";
 import {
+  AgentChangeReport,
   AgentImageUpdateStatus,
+  AgentPromptMetrics,
+  AgentRenderingDiagnostics,
   AgentStageTimings,
   AgentTargetingDiagnostics,
 } from "../../types";
@@ -47,16 +50,25 @@ export type Variant = {
     stage?: string;
     message?: string;
     failureStage?: string;
+    promptStrategy?: "history" | "file_snapshot";
+    promptStrategyReason?: string;
     selfCheckStatus?: "pass" | "warn" | "fail";
     selfCheckSummary?: string;
     selfCheckIssues?: string[];
+    localCheckOnly?: boolean;
+    escalatedPreviewCheck?: boolean;
+    previewEscalationReason?: string | null;
     targeting?: AgentTargetingDiagnostics;
     imageUpdateStatus?: AgentImageUpdateStatus | null;
+    rendering?: AgentRenderingDiagnostics | null;
+    changeReport?: AgentChangeReport | null;
   };
   metrics?: {
     durationMs?: number;
     runId?: string;
+    promptStrategy?: "history" | "file_snapshot";
     stageTimings?: AgentStageTimings;
+    promptMetrics?: AgentPromptMetrics;
   };
 };
 

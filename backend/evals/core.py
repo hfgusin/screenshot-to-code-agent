@@ -4,6 +4,8 @@ from config import (
     LOCAL_ASSET_BASE_URL,
     OPENAI_API_KEY,
     OPENAI_BASE_URL,
+    OPENAI_IMAGE_API_KEY,
+    OPENAI_IMAGE_BASE_URL,
 )
 from llm import Llm, OPENAI_MODELS, ANTHROPIC_MODELS, GEMINI_MODELS
 from agent.runner import Agent
@@ -44,6 +46,8 @@ async def generate_code_for_image(image_url: str, stack: Stack, model: Llm) -> s
         variant_index=0,
         openai_api_key=OPENAI_API_KEY,
         openai_base_url=OPENAI_BASE_URL,
+        openai_image_api_key=OPENAI_IMAGE_API_KEY or OPENAI_API_KEY,
+        openai_image_base_url=OPENAI_IMAGE_BASE_URL or OPENAI_BASE_URL,
         anthropic_api_key=ANTHROPIC_API_KEY,
         gemini_api_key=GEMINI_API_KEY,
         should_generate_images=True,

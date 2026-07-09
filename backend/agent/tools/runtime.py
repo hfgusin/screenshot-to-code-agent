@@ -214,15 +214,15 @@ class AgentToolRuntime:
                 },
             )
 
-        self.file_state.path = path
-        self.file_state.content = extracted or content
+        self.file_state.path = path # 更新文件路径
+        self.file_state.content = extracted or content # 更新文件内容
 
-        summary = {
+        summary = { # 返回摘要
             "path": self.file_state.path,
             "contentLength": len(self.file_state.content),
             "preview": summarize_text(self.file_state.content, 320),
         }
-        result = {
+        result = { # 返回结果
             "content": f"Successfully created file at {self.file_state.path}.",
             "details": {
                 "path": self.file_state.path,
