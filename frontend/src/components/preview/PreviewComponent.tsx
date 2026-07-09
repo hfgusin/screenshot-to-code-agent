@@ -352,9 +352,9 @@ function PreviewComponent({
   </head>
   <body>
     <div class="shell">
-      <div class="badge"><span class="dot"></span>Preview pending</div>
-      <h1>${isGenerating ? "Generating preview…" : "No renderable preview yet"}</h1>
-      <p>${isGenerating ? "We are keeping the last stable screen visible while the next draft lands." : "The agent has not produced renderable code yet, so this shell prevents a blank canvas."}</p>
+      <div class="badge"><span class="dot"></span>预览待生成</div>
+      <h1>${isGenerating ? "正在生成预览..." : "还没有可渲染预览"}</h1>
+      <p>${isGenerating ? "新草稿生成期间，会先保留上一版稳定画面。" : "Agent 还没有产出可渲染代码，这个占位页用于避免空白画布。"}</p>
     </div>
   </body>
 </html>`;
@@ -385,7 +385,7 @@ function PreviewComponent({
           <iframe
             id={`preview-${device}`}
             ref={iframeRef}
-            title="Preview"
+            title="预览"
             className={classNames(
               {
                 "border-0": true,
@@ -395,7 +395,7 @@ function PreviewComponent({
           {isGenerating && !hasRenderableCode && (
             <div className="absolute inset-0 pointer-events-none flex items-center justify-center bg-white/75 dark:bg-zinc-950/70 backdrop-blur-sm">
               <div className="rounded-2xl border border-dashed border-violet-300 bg-white px-5 py-3 text-sm font-medium text-violet-700 shadow-sm dark:border-violet-800 dark:bg-zinc-900 dark:text-violet-300">
-                Waiting for renderable code…
+                正在等待可渲染代码...
               </div>
             </div>
           )}

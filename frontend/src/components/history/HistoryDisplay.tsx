@@ -21,7 +21,7 @@ function MediaThumbnail({
       {firstImage ? (
         <img
           src={firstImage}
-          alt="Input screenshot"
+          alt="输入截图"
           className="w-full h-full object-cover"
           draggable={false}
         />
@@ -83,7 +83,7 @@ function ExpandedMedia({
         >
           <img
             src={img}
-            alt={`Input ${i + 1}`}
+            alt={`输入 ${i + 1}`}
             className="w-full h-auto object-contain max-h-48"
             draggable={false}
           />
@@ -129,7 +129,7 @@ export default function HistoryDisplay() {
   const handleRollback = useCallback(
     (hash: string, versionNumber: number) => {
       setHead(hash);
-      toast.success(`Rolled back working base to version ${versionNumber}.`);
+      toast.success(`已回退工作基线到版本 ${versionNumber}。`);
     },
     [setHead]
   );
@@ -149,7 +149,7 @@ export default function HistoryDisplay() {
     <div className="flex flex-col gap-2">
       {isDraftInProgress && (
         <div className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900 dark:border-violet-900/50 dark:bg-violet-950/20 dark:text-violet-100">
-          New draft is updating separately. The versions below are frozen history.
+          新草稿正在单独更新。下面的版本记录会暂时冻结。
         </div>
       )}
       {[...renderedHistory].reverse().map((item, _reverseIndex) => {
@@ -194,9 +194,9 @@ export default function HistoryDisplay() {
                 <div className="flex items-center gap-1.5">
                   <span
                     className={`text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded ${
-                      item.type === "Create"
+                      item.type === "创建"
                         ? "bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400"
-                        : item.type === "Edit"
+                        : item.type === "编辑"
                           ? "bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400"
                           : "bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400"
                     }`}
@@ -205,7 +205,7 @@ export default function HistoryDisplay() {
                   </span>
                   {item.parentVersion !== null && (
                     <span className="text-[10px] text-gray-400 dark:text-gray-500">
-                      from v{item.parentVersion}
+                      来自版本 {item.parentVersion}
                     </span>
                   )}
                 </div>
@@ -256,7 +256,7 @@ export default function HistoryDisplay() {
                 )}
                 {item.selectedElementTag && (
                   <p className="text-xs text-violet-500 dark:text-violet-400 mt-1">
-                    Target: <code className="font-mono text-[10px] bg-violet-100 dark:bg-violet-900/30 px-1 py-0.5 rounded">&lt;{item.selectedElementTag}&gt;</code>
+                    目标：<code className="font-mono text-[10px] bg-violet-100 dark:bg-violet-900/30 px-1 py-0.5 rounded">&lt;{item.selectedElementTag}&gt;</code>
                   </p>
                 )}
                 <div className="mt-2 flex gap-2">
@@ -273,9 +273,9 @@ export default function HistoryDisplay() {
                     }`}
                     disabled={isActive || isDraftInProgress}
                     data-testid={`rollback-version-${versionNumber}`}
-                    title="Restore this version as the current working base"
+                    title="恢复这个版本作为当前工作基线"
                   >
-                    {isActive ? "Current base" : "Rollback here"}
+                    {isActive ? "当前基线" : "回退到这里"}
                   </button>
                 </div>
                 <ExpandedMedia

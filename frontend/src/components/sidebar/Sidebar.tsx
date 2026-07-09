@@ -10,7 +10,7 @@ import Variants from "../variants/Variants";
 import UpdateImageUpload, { UpdateImagePreview } from "../UpdateImageUpload";
 import AgentActivity from "../agent/AgentActivity";
 import AgentMaturityPanel from "../agent/AgentMaturityPanel";
-import AgentRegressionPanel from "../agent/AgentRegressionPanel";
+import AgentDebugPanel from "../agent/AgentDebugPanel";
 import WorkingPulse from "../core/WorkingPulse";
 import ImageLightbox from "../ImageLightbox";
 import { Commit } from "../commits/types";
@@ -44,22 +44,22 @@ function extractTagName(html: string): string {
 
 function summarizeLatestChange(commit: Commit | null): string | null {
   if (!commit) return null;
-  if (commit.type === "code_create") return "Imported existing code.";
+  if (commit.type === "code_create") return "已导入现有代码。";
 
   const text = commit.inputs.text.trim();
   if (text.length > 0) return text;
 
   if (commit.type === "ai_create") {
-    return "Create";
+    return "创建";
   }
 
   if (commit.inputs.images.length > 1) {
-    return `Updated with ${commit.inputs.images.length} reference images.`;
+    return `已使用 ${commit.inputs.images.length} 张参考图更新。`;
   }
   if (commit.inputs.images.length === 1) {
-    return "Updated with one reference image.";
+    return "已使用 1 张参考图更新。";
   }
-  return "Updated code.";
+  return "已更新代码。";
 }
 
 function getSelectedElementTag(commit: Commit | null): string | null {
@@ -74,6 +74,33 @@ function isSlowGeminiModel(model?: string): boolean {
     model === CodeGenerationModel.GEMINI_3_1_PRO_PREVIEW_HIGH ||
     model === CodeGenerationModel.GEMINI_3_1_PRO_PREVIEW_MEDIUM
   );
+}
+
+function formatDiagnosticValue(value?: string | null): string {
+  switch (value) {
+    case "pass":
+      return "通过";
+    case "warn":
+      return "警告";
+    case "fail":
+      return "失败";
+    case "ok":
+      return "正常";
+    case "missing":
+      return "缺失";
+    case "error":
+      return "错误";
+    case "create":
+      return "创建";
+    case "update":
+      return "更新";
+    case "image_update":
+      return "图片更新";
+    case "none":
+      return "无";
+    default:
+      return value || "未知";
+  }
 }
 
 function Sidebar({
@@ -134,7 +161,7 @@ function Sidebar({
       try {
         if (updateImages.length >= MAX_UPDATE_IMAGES) {
           toast.error(
-            `You’ve reached the limit of ${MAX_UPDATE_IMAGES} reference images. Remove one to add another.`
+            `参考图最多只能上传 ${MAX_UPDATE_IMAGES} 张，想继续添加请先删除一张。`
           );
           return;
         }
@@ -143,9 +170,7 @@ function Sidebar({
         let filesToAdd = files;
         if (filesToAdd.length > remainingSlots) {
           toast.error(
-            `Only ${remainingSlots} more image${
-              remainingSlots === 1 ? "" : "s"
-            } will be added to stay within the ${MAX_UPDATE_IMAGES}-image limit.`
+            `为保持最多 ${MAX_UPDATE_IMAGES} 张的限制，本次只会再添加 ${remainingSlots} 张图片。`
           );
           filesToAdd = filesToAdd.slice(0, remainingSlots);
         }
@@ -154,7 +179,7 @@ function Sidebar({
         const newImages = await Promise.all(newImagePromises);
         setUpdateImages([...updateImages, ...newImages]);
       } catch (error) {
-        console.error("Error reading files:", error);
+        console.error("读取文件失败：", error);
       }
     },
     [updateImages, setUpdateImages]
@@ -307,7 +332,7 @@ function Sidebar({
 
       {isDraftInProgress && (
         <div className="border-b border-violet-200/70 bg-violet-50/70 px-4 py-2 text-xs text-violet-900 dark:border-violet-900/50 dark:bg-violet-950/20 dark:text-violet-100">
-          <span className="font-semibold">Draft in progress.</span> Historical versions are frozen while the new draft updates.
+          <span className="font-semibold">草稿生成中。</span> 新草稿更新期间，历史版本会暂时冻结。
         </div>
       )}
 
@@ -331,7 +356,7 @@ function Sidebar({
                 <div className="mt-1.5 flex items-center gap-1.5">
                   <LuMousePointerClick className="w-3 h-3 text-violet-500 dark:text-violet-400" />
                   <span className="text-[11px] text-violet-600 dark:text-violet-300">
-                    Selected: <code className="font-mono text-[10px] bg-violet-200/60 dark:bg-violet-800/50 px-1 py-0.5 rounded">&lt;{selectedElementTag}&gt;</code>
+                    已选中：<code className="font-mono text-[10px] bg-violet-200/60 dark:bg-violet-800/50 px-1 py-0.5 rounded">&lt;{selectedElementTag}&gt;</code>
                   </span>
                 </div>
               )}
@@ -341,7 +366,7 @@ function Sidebar({
                     onClick={() => setIsPromptExpanded(!isPromptExpanded)}
                     className="text-[11px] font-medium text-gray-600 bg-white/70 hover:bg-white dark:text-gray-300 dark:bg-zinc-800/70 dark:hover:bg-zinc-800 px-2 py-0.5 rounded-full transition-colors shadow-sm"
                   >
-                    {isPromptExpanded ? "less" : "more"}
+                    {isPromptExpanded ? "收起" : "展开"}
                   </button>
                 </div>
               )}
@@ -356,7 +381,7 @@ function Sidebar({
                     >
                       <img
                         src={image}
-                        alt={`Reference ${index + 1}`}
+                        alt={`参考图 ${index + 1}`}
                         className="h-24 w-24 object-contain"
                         loading="lazy"
                       />
@@ -385,10 +410,10 @@ function Sidebar({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
                 <WorkingPulse />
-                <span>Working...</span>
+                <span>处理中...</span>
               </div>
               <div className="text-xs font-semibold text-gray-700 dark:text-gray-200">
-                Time so far {elapsedSeconds ? `${elapsedSeconds}s` : "--"}
+                已耗时 {elapsedSeconds ? `${elapsedSeconds}s` : "--"}
               </div>
             </div>
           </div>
@@ -397,13 +422,13 @@ function Sidebar({
         {latestUpdateIntent && currentCommit?.type === "ai_edit" && (
           <div className="mb-3 rounded-xl border border-violet-200/80 bg-violet-50/60 px-3 py-3 text-xs dark:border-violet-900/50 dark:bg-violet-950/20">
             <div className="mb-1 font-semibold uppercase tracking-[0.18em] text-violet-700 dark:text-violet-300">
-              Structured edit target
+              结构化编辑目标
             </div>
             <div className="space-y-1 text-violet-900 dark:text-violet-100">
-              <div>Target: {latestUpdateIntent.target}</div>
-              <div>Intent: {latestUpdateIntent.intent}</div>
-              <div>Placement: {latestUpdateIntent.placement}</div>
-              <div>Alignment: {latestUpdateIntent.alignment}</div>
+              <div>目标：{latestUpdateIntent.target}</div>
+              <div>意图：{latestUpdateIntent.intent}</div>
+              <div>位置：{latestUpdateIntent.placement}</div>
+              <div>对齐：{latestUpdateIntent.alignment}</div>
             </div>
           </div>
         )}
@@ -411,46 +436,48 @@ function Sidebar({
         {(selectedVariantDiagnostics || selectedVariantMetrics?.durationMs) && (
           <div className="mb-3 rounded-xl border border-gray-200 bg-white px-3 py-3 text-xs dark:border-zinc-800 dark:bg-zinc-900">
             <div className="mb-1 font-semibold uppercase tracking-[0.18em] text-gray-500 dark:text-zinc-400">
-              Agent diagnostics
+              Agent 诊断
             </div>
             <div className="space-y-1 text-gray-700 dark:text-zinc-300">
               {selectedVariantMetrics?.durationMs !== undefined && (
-                <div>Duration: {(selectedVariantMetrics.durationMs / 1000).toFixed(1)}s</div>
+                <div>耗时：{(selectedVariantMetrics.durationMs / 1000).toFixed(1)}s</div>
               )}
               {(selectedVariantDiagnostics?.failureStage ||
                 selectedVariantDiagnostics?.stage) && (
                 <div>
-                  Failure stage:{" "}
-                  {selectedVariantDiagnostics?.failureStage ||
-                    selectedVariantDiagnostics?.stage}
+                  失败阶段：
+                  {formatDiagnosticValue(
+                    selectedVariantDiagnostics?.failureStage ||
+                      selectedVariantDiagnostics?.stage
+                  )}
                 </div>
               )}
               {selectedVariantDiagnostics?.selfCheckStatus && (
-                <div>Preview self-check: {selectedVariantDiagnostics.selfCheckStatus}</div>
+                <div>预览自检：{formatDiagnosticValue(selectedVariantDiagnostics.selfCheckStatus)}</div>
               )}
               {selectedVariantDiagnostics?.targeting && (
                 <div>
-                  Target hit: {Math.round(selectedVariantDiagnostics.targeting.score * 100)}%
+                  目标命中：{Math.round(selectedVariantDiagnostics.targeting.score * 100)}%
                   {" · "}
-                  {selectedVariantDiagnostics.targeting.intentMatched ? "intent matched" : "intent weak"}
+                  {selectedVariantDiagnostics.targeting.intentMatched ? "意图匹配" : "意图偏弱"}
                   {" · "}
-                  {selectedVariantDiagnostics.targeting.collateralDamage ? "outside changed" : "outside preserved"}
+                  {selectedVariantDiagnostics.targeting.collateralDamage ? "非目标区域有变化" : "非目标区域已保留"}
                 </div>
               )}
               {selectedVariantDiagnostics?.imageUpdateStatus && (
                 <div>
-                  Image update: {selectedVariantDiagnostics.imageUpdateStatus.operation}
+                  图片更新：{formatDiagnosticValue(selectedVariantDiagnostics.imageUpdateStatus.operation)}
                   {" · "}
-                  {selectedVariantDiagnostics.imageUpdateStatus.status}
+                  {formatDiagnosticValue(selectedVariantDiagnostics.imageUpdateStatus.status)}
                 </div>
               )}
               {selectedVariantMetrics?.stageTimings && (
                 <div className="rounded-lg bg-gray-50 px-2 py-2 text-[11px] text-gray-500 dark:bg-zinc-800/60 dark:text-zinc-400">
-                  parse {((selectedVariantMetrics.stageTimings.requestParseMs ?? 0) / 1000).toFixed(1)}s
-                  {" · "}prompt {((selectedVariantMetrics.stageTimings.promptBuildMs ?? 0) / 1000).toFixed(1)}s
-                  {" · "}model {((selectedVariantMetrics.stageTimings.modelGenerationMs ?? 0) / 1000).toFixed(1)}s
-                  {" · "}tools {((selectedVariantMetrics.stageTimings.toolRuntimeMs ?? 0) / 1000).toFixed(1)}s
-                  {" · "}image {((selectedVariantMetrics.stageTimings.imageGenerationMs ?? 0) / 1000).toFixed(1)}s
+                  解析 {((selectedVariantMetrics.stageTimings.requestParseMs ?? 0) / 1000).toFixed(1)}s
+                  {" · "}Prompt {((selectedVariantMetrics.stageTimings.promptBuildMs ?? 0) / 1000).toFixed(1)}s
+                  {" · "}模型 {((selectedVariantMetrics.stageTimings.modelGenerationMs ?? 0) / 1000).toFixed(1)}s
+                  {" · "}工具 {((selectedVariantMetrics.stageTimings.toolRuntimeMs ?? 0) / 1000).toFixed(1)}s
+                  {" · "}图片 {((selectedVariantMetrics.stageTimings.imageGenerationMs ?? 0) / 1000).toFixed(1)}s
                 </div>
               )}
               {selectedVariantDiagnostics?.selfCheckSummary && (
@@ -483,30 +510,30 @@ function Sidebar({
           !isSelectedVariantError &&
           isSlowGeminiModel(selectedVariant?.model) && (
           <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
-            Slow, high quality model. May take 5-10 mins on some images/videos.
+            当前是慢速高质量模型，部分图片或视频可能需要 5 到 10 分钟。
           </div>
         )}
 
         {isViewingOlderVersion && currentVersionNumber !== null ? (
           <div className="mb-4 flex flex-col items-center py-6">
             <p className="text-2xl font-semibold text-gray-900 dark:text-zinc-100">
-              Version {currentVersionNumber}
+              版本 {currentVersionNumber}
             </p>
             <p className="mt-1 text-sm text-gray-400 dark:text-gray-500">
-              You are viewing an older version
+              你当前查看的是旧版本
             </p>
             <div className="mt-4 flex gap-2">
               <button
                 onClick={onOpenVersions}
                 className="rounded-lg border border-gray-300 dark:border-zinc-600 px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-700 transition-colors"
               >
-                All versions
+                所有版本
               </button>
               <button
                 onClick={() => latestCommitHash && setHead(latestCommitHash)}
                 className="rounded-lg bg-gray-900 dark:bg-white px-4 py-2 text-sm font-medium text-white dark:text-black hover:bg-black dark:hover:bg-gray-200 transition-colors"
               >
-                View latest
+                查看最新版本
               </button>
             </div>
           </div>
@@ -516,6 +543,10 @@ function Sidebar({
 
         <div className="mb-4">
           <AgentMaturityPanel />
+        </div>
+
+        <div className="mb-4">
+          <AgentDebugPanel workspaceId={workspaceId} designSession={designSession} />
         </div>
 
         <div className="mb-4">
@@ -536,9 +567,6 @@ function Sidebar({
           />
         </div>
 
-        <div className="mb-4">
-          <AgentRegressionPanel />
-        </div>
 
         {/* Regenerate button for first generation.
             Scenarios:
@@ -558,7 +586,7 @@ function Sidebar({
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-zinc-800 transition-colors"
             >
               <LuRefreshCw className="w-3.5 h-3.5" />
-              Retry
+              重试
             </button>
           </div>
         )}
@@ -570,7 +598,7 @@ function Sidebar({
               onClick={cancelCodeGeneration}
               className="w-full dark:text-white dark:bg-gray-700"
             >
-              Cancel All Generations
+              取消本轮全部生成
             </Button>
           </div>
         )}
@@ -580,7 +608,7 @@ function Sidebar({
           <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-md p-3 mb-2">
             <div className="text-red-800 dark:text-red-200 text-sm">
               <div className="font-medium mb-1">
-                This option failed to generate because
+                这个方案生成失败，原因如下
               </div>
               {selectedVariantErrorMessage && (
                 <div className="mb-2">
@@ -594,15 +622,15 @@ function Sidebar({
                       onClick={() => setIsErrorExpanded(!isErrorExpanded)}
                       className="text-red-600 dark:text-red-400 text-xs underline mt-1 hover:text-red-800 dark:hover:text-red-300"
                     >
-                      {isErrorExpanded ? "Show less" : "Show more"}
+                      {isErrorExpanded ? "收起" : "展开"}
                     </button>
                   )}
                 </div>
               )}
               <div>
                 {isFirstGeneration
-                  ? "Click Retry to run the create request again."
-                  : "Switch to another option above to make updates."}
+                  ? "点击“重试”可以重新执行这次创建请求。"
+                  : "可以切换到上方其他方案后继续修改。"}
               </div>
             </div>
           </div>
@@ -631,13 +659,13 @@ function Sidebar({
                     <div className="flex items-center gap-2 min-w-0">
                       <LuMousePointerClick className="w-3.5 h-3.5 text-violet-600 dark:text-violet-400 shrink-0" />
                       <span className="text-sm text-violet-700 dark:text-violet-300 truncate">
-                        Selected: <code className="font-mono text-xs bg-violet-100 dark:bg-violet-800/50 px-1.5 py-0.5 rounded">&lt;{selectedElement.tagName.toLowerCase()}&gt;</code>
+                        已选中：<code className="font-mono text-xs bg-violet-100 dark:bg-violet-800/50 px-1.5 py-0.5 rounded">&lt;{selectedElement.tagName.toLowerCase()}&gt;</code>
                       </span>
                     </div>
                     <button
                       onClick={() => setSelectedElement(null)}
                       className="shrink-0 ml-3 p-0.5 text-violet-400 hover:text-violet-700 dark:hover:text-violet-200 transition-colors"
-                      title="Clear selection"
+                      title="清除选区"
                     >
                       <LuX className="w-3.5 h-3.5" />
                     </button>
@@ -646,13 +674,13 @@ function Sidebar({
                   <div className="flex items-center justify-between rounded-xl border border-violet-200 dark:border-violet-700 bg-violet-50 dark:bg-violet-900/20 px-3 py-2">
                     <div className="flex items-center gap-2">
                       <LuMousePointerClick className="w-3.5 h-3.5 text-violet-500 dark:text-violet-400 shrink-0" />
-                      <span className="text-sm font-medium text-violet-700 dark:text-violet-300">Click an element to edit it</span>
+                      <span className="text-sm font-medium text-violet-700 dark:text-violet-300">点击一个元素开始局部编辑</span>
                     </div>
                     <button
                       onClick={toggleInSelectAndEditMode}
                       className="shrink-0 ml-3 text-sm text-violet-500 dark:text-violet-400 hover:text-violet-800 dark:hover:text-violet-200 transition-colors"
                     >
-                      Exit
+                      退出
                     </button>
                   </div>
                 )}
@@ -667,8 +695,8 @@ function Sidebar({
                 ref={textareaRef}
                 placeholder={
                   inSelectAndEditMode && selectedElement
-                    ? `Describe changes for the selected <${selectedElement.tagName.toLowerCase()}> element...`
-                    : "Tell the AI what to change..."
+                    ? `请描述你想对选中的 <${selectedElement.tagName.toLowerCase()}> 元素做什么修改...`
+                    : "告诉 AI 你想改什么..."
                 }
                 onChange={(e) => {
                   setUpdateInstruction(e.target.value);
@@ -699,7 +727,7 @@ function Sidebar({
                         ? "bg-violet-100 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400"
                         : "text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
                     }`}
-                    title={inSelectAndEditMode ? "Exit selection mode" : "Select an element in the preview to target your edit"}
+                      title={inSelectAndEditMode ? "退出选区模式" : "在预览里选中一个元素，让这次修改更精准"}
                   >
                     <LuMousePointerClick className="w-[18px] h-[18px]" />
                   </button>
@@ -713,7 +741,7 @@ function Sidebar({
                       ? "bg-violet-600 text-white hover:bg-violet-700 dark:bg-violet-500 dark:hover:bg-violet-400"
                       : "cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-zinc-700 dark:text-zinc-500"
                   }`}
-                  title="Send"
+                  title="发送"
                 >
                   <LuArrowUp className="w-[18px] h-[18px]" strokeWidth={2.5} />
                 </button>
@@ -721,7 +749,7 @@ function Sidebar({
 
               {isDragging && (
                 <div className="absolute inset-0 bg-blue-50/90 dark:bg-gray-800/90 border-2 border-dashed border-blue-400 dark:border-blue-600 rounded-xl flex items-center justify-center pointer-events-none z-10">
-                  <p className="text-blue-600 dark:text-blue-400 font-medium">Drop images here</p>
+                  <p className="text-blue-600 dark:text-blue-400 font-medium">把图片拖到这里</p>
                 </div>
               )}
             </div>

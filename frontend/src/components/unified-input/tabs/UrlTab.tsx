@@ -38,27 +38,27 @@ function UrlTab({
 
     if (!screenshotOneApiKey) {
       toast.error(
-        "Please add a ScreenshotOne API key in Settings. You can also upload screenshots directly in the Upload tab.",
+        "请先在设置里添加 ScreenshotOne API key。你也可以直接在“上传”页签里上传截图。",
         { duration: 6000 },
       );
       return;
     }
 
     if (!trimmedReferenceUrl) {
-      toast.error("Please enter a URL");
+      toast.error("请先输入 URL");
       return;
     }
 
     if (trimmedReferenceUrl.toLowerCase().startsWith("file://")) {
       toast.error(
-        "file:// URLs can't be screenshot. If you're trying to import a local file, please use the Import tab.",
+        "不能截取 file:// URL。如果你想导入本地文件，请使用“导入”页签。",
       );
       return;
     }
 
     if (isFigmaUrl(trimmedReferenceUrl)) {
       toast.error(
-        "Direct Figma import is not supported. Take a screenshot of your design or export the artboards as images, then use the Upload tab.",
+        "暂不支持直接导入 Figma。请先截图或把画板导出成图片，再使用“上传”页签。",
         { duration: 6000 },
       );
       return;
@@ -78,14 +78,14 @@ function UrlTab({
       });
 
       if (!response.ok) {
-        throw new Error("Failed to capture screenshot");
+        throw new Error("截图失败");
       }
 
       const res = await response.json();
       doCreate([res.url], "image");
     } catch (error) {
       console.error(error);
-      toast.error("Failed to capture screenshot. Check console for details.");
+      toast.error("截图失败，请查看控制台详情。");
     } finally {
       setIsLoading(false);
     }
@@ -114,7 +114,7 @@ function UrlTab({
           </div>
 
           <div className="text-center">
-            <h3 className="text-gray-700 dark:text-zinc-200 font-medium">Screenshot from URL</h3>
+            <h3 className="text-gray-700 dark:text-zinc-200 font-medium">从 URL 截图</h3>
           </div>
 
           <div className="w-full space-y-3">
@@ -132,9 +132,7 @@ function UrlTab({
             />
             {isFigmaUrl(referenceUrl) && (
               <p className="text-xs text-amber-600 dark:text-amber-400">
-                Direct Figma import is not supported. Take a screenshot of your
-                design or export the artboards as images, then use the Upload
-                tab.
+                暂不支持直接导入 Figma。请先截图或把画板导出成图片，再使用“上传”页签。
               </p>
             )}
             <OutputSettingsSection
@@ -172,16 +170,16 @@ function UrlTab({
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                     />
                   </svg>
-                  Capturing...
+                  截图中...
                 </span>
               ) : (
-                "Capture & Generate"
+                "截图并生成"
               )}
             </Button>
           </div>
 
           <p className="text-xs text-gray-400 dark:text-zinc-500 text-center">
-            Requires ScreenshotOne API key.
+            需要 ScreenshotOne API key。
           </p>
         </div>
       </div>

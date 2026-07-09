@@ -38,12 +38,11 @@ export interface VariantLabelContext {
   generationType: "create" | "update";
 }
 
-// Per-model badge text. Only these models are labelled. GPT-5.5 high and
-// Gemini 3.1 Pro high are the heavyweight variants, so both read "Max".
+// Per-model badge text. Only these models are labelled.
 const VARIANT_LABELS: Partial<Record<CodeGenerationModel, VariantLabel>> = {
-  [CodeGenerationModel.GEMINI_3_FLASH_PREVIEW_MINIMAL]: { text: "Fast", tone: "fast" },
-  [CodeGenerationModel.GEMINI_3_1_PRO_PREVIEW_HIGH]: { text: "Max", tone: "max" },
-  [CodeGenerationModel.GPT_5_5_HIGH]: { text: "Max", tone: "max" },
+  [CodeGenerationModel.GEMINI_3_FLASH_PREVIEW_MINIMAL]: { text: "快速", tone: "fast" },
+  [CodeGenerationModel.GEMINI_3_1_PRO_PREVIEW_HIGH]: { text: "高质", tone: "max" },
+  [CodeGenerationModel.GPT_5_5_HIGH]: { text: "高质", tone: "max" },
 };
 
 // Badges are only shown on create flows and on any video flow. In particular

@@ -32,9 +32,11 @@ class AgentEngine:
         variant_index: int,
         openai_api_key: Optional[str],
         openai_base_url: Optional[str],
-        anthropic_api_key: Optional[str],
-        gemini_api_key: Optional[str],
-        should_generate_images: bool,
+        openai_image_api_key: Optional[str] = None,
+        openai_image_base_url: Optional[str] = None,
+        anthropic_api_key: Optional[str] = None,
+        gemini_api_key: Optional[str] = None,
+        should_generate_images: bool = True,
         asset_base_url: str = "",
         initial_file_state: Optional[Dict[str, str]] = None,
         option_codes: Optional[List[str]] = None,
@@ -43,6 +45,8 @@ class AgentEngine:
         self.variant_index = variant_index
         self.openai_api_key = openai_api_key
         self.openai_base_url = openai_base_url
+        self.openai_image_api_key = openai_image_api_key
+        self.openai_image_base_url = openai_image_base_url
         self.anthropic_api_key = anthropic_api_key
         self.gemini_api_key = gemini_api_key
         self.should_generate_images = should_generate_images
@@ -57,6 +61,8 @@ class AgentEngine:
             should_generate_images=should_generate_images,
             openai_api_key=openai_api_key,
             openai_base_url=openai_base_url,
+            openai_image_api_key=openai_image_api_key,
+            openai_image_base_url=openai_image_base_url,
             gemini_api_key=gemini_api_key,
             asset_base_url=asset_base_url,
             option_codes=option_codes,
@@ -70,6 +76,35 @@ class AgentEngine:
             "toolCalls": 0,
             "latestImageUpdate": None,
         }
+
+    @staticmethod
+    def _tool_failure_signature(
+        tool_call: ToolCall,
+        tool_result: Any,
+    ) -> Optional[str]:
+        if tool_result.ok:
+            return None
+
+        error = tool_result.summary.get("error") or tool_result.result.get("error") # 获取工具调用错误信息
+        if not isinstance(error, str) or not error:
+            error = "unknown tool failure" # 如果错误信息不是字符串，则返回未知工具调用失败
+
+        if tool_call.name == "edit_file" and error == "old_text not found": # 如果工具是编辑文件，并且错误是old_text not found，则返回工具调用失败签名
+            old_text = tool_result.summary.get("old_text")
+            if isinstance(old_text, str) and old_text:
+                return f"{tool_call.name}:{error}:{old_text}" # 如果工具是编辑文件，并且错误是old_text not found，则返回工具调用失败签名
+
+        return f"{tool_call.name}:{error}" # 如果工具是编辑文件，并且错误是old_text not found，则返回工具调用失败签名
+
+    @staticmethod
+    def _tool_failure_message(signature: str) -> str:
+        if signature.startswith("edit_file:old_text not found:"):
+            return (
+                "edit_file failed repeatedly because old_text was not found. "
+                "Read the current index.html content first, then edit using text "
+                "that exactly exists in the current file."
+            )
+        return f"Tool failed repeatedly: {signature}"
 
     @staticmethod
     def _extract_input_images(
@@ -217,15 +252,18 @@ class AgentEngine:
 
     async def _run_with_session(self, session: ProviderSession) -> str:
         max_steps = 20
+        repeated_failure_signature: Optional[str] = None
+        repeated_failure_count = 0
 
         for _ in range(max_steps):
             assistant_event_id = self._next_event_id("assistant")
             thinking_event_id = self._next_event_id("thinking")
-            started_tool_ids: set[str] = set()
-            streamed_lengths: Dict[str, int] = {}
+            started_tool_ids: set[str] = set() # 记录当前正在执行的工具调用ID，避免重复发送
+            streamed_lengths: Dict[str, int] = {} # 记录当前正在执行的工具调用参数长度，避免重复发送
 
             async def on_event(event: StreamEvent) -> None:
-                if event.type == "assistant_delta":
+                # I 普通回答文字，分片实时下发
+                if event.type == "assistant_delta": 
                     if event.text:
                         await self._send(
                             "assistant",
@@ -233,7 +271,7 @@ class AgentEngine:
                             event_id=assistant_event_id,
                         )
                     return
-
+                #AI 内部思考过程文字（推理、规划步骤），单独流式展示
                 if event.type == "thinking_delta":
                     if event.text:
                         await self._send(
@@ -242,7 +280,7 @@ class AgentEngine:
                             event_id=thinking_event_id,
                         )
                     return
-
+                #AI 正在生成工具调用参数，分片缓存、拼接完整工具入参
                 if event.type == "tool_call_delta":
                     await self._handle_streamed_tool_delta(
                         event,
@@ -250,38 +288,37 @@ class AgentEngine:
                         streamed_lengths,
                     )
 
-            turn = await session.stream_turn(on_event)
+            turn = await session.stream_turn(on_event) # 流式获取AI回复内容
 
-            if not turn.tool_calls:
+            if not turn.tool_calls: # 如果AI没有生成工具调用，则直接返回回复内容
                 return await self._finalize_response(turn.assistant_text)
 
-            executed_tool_calls: List[ExecutedToolCall] = []
-            file_changed_this_turn = False
+            executed_tool_calls: List[ExecutedToolCall] = [] # 记录当前回合执行的工具调用结果
+            file_changed_this_turn = False # 记录当前回合是否修改了文件
             for tool_call in turn.tool_calls:
-                tool_event_id = tool_call.id or self._next_event_id("tool")
+                tool_event_id = tool_call.id or self._next_event_id("tool") # 生成工具调用ID
                 if tool_event_id not in started_tool_ids:
                     await self._send(
                         "toolStart",
                         data={
-                            "name": tool_call.name,
-                            "input": summarize_tool_input(tool_call, self.file_state),
+                            "name": tool_call.name, 
+                            "input": summarize_tool_input(tool_call, self.file_state), # 工具入参摘要
                         },
                         event_id=tool_event_id,
                     )
-
+                # 如果工具是创建文件，则流式展示文件内容
                 if tool_call.name == "create_file":
                     content = extract_content_from_args(tool_call.arguments)
-                    if content and is_renderable_html_document(content):
+                    if content and is_renderable_html_document(content): # 如果文件内容是可渲染的HTML，则流式展示文件内容
                         await self._stream_code_preview(tool_event_id, content)
-
-                tool_result = await self.tool_runtime.execute(tool_call)
+                tool_result = await self.tool_runtime.execute(tool_call) # 执行工具调用
                 if tool_call.name in {"create_file", "edit_file"} and tool_result.ok:
                     file_changed_this_turn = True
-                if tool_result.updated_content:
+                if tool_result.updated_content: # 如果工具调用成功，则更新文件内容
                     await self._send("setCode", tool_result.updated_content)
 
                 await self._send(
-                    "toolResult",
+                    "toolResult", # 发送工具调用结果
                     data={
                         "name": tool_call.name,
                         "output": tool_result.summary,
@@ -292,6 +329,21 @@ class AgentEngine:
                 executed_tool_calls.append(
                     ExecutedToolCall(tool_call=tool_call, result=tool_result)
                 )
+
+                failure_signature = self._tool_failure_signature(tool_call, tool_result) # 生成工具调用失败签名
+                if failure_signature:
+                    if failure_signature == repeated_failure_signature:
+                        repeated_failure_count += 1
+                    else:
+                        repeated_failure_signature = failure_signature
+                        repeated_failure_count = 1
+                    if repeated_failure_count >= 3:
+                        raise Exception( # 如果工具调用失败次数超过3次，则抛出异常
+                            self._tool_failure_message(failure_signature)
+                        )
+                else:
+                    repeated_failure_signature = None
+                    repeated_failure_count = 0
 
             if file_changed_this_turn:
                 self_check = await self._run_self_check_preview()

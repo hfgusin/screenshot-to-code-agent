@@ -66,13 +66,13 @@ function DesignSystemSelector({
           data-testid="design-system-select"
           aria-label={
             hasSelection
-              ? `Design system: ${selectedDesignSystem.name}`
-              : "Add a design system"
+              ? `设计系统：${selectedDesignSystem.name}`
+              : "添加设计系统"
           }
           title={
             hasSelection
-              ? `Design system: ${selectedDesignSystem.name}`
-              : "Add a design system"
+              ? `设计系统：${selectedDesignSystem.name}`
+              : "添加设计系统"
           }
         >
           <LuPalette className="h-3.5 w-3.5 shrink-0" />
@@ -87,12 +87,12 @@ function DesignSystemSelector({
         </SelectTrigger>
       ) : hasSelection ? (
         <div className="grid grid-cols-3 items-center gap-4 text-sm">
-          <span>Design system:</span>
+          <span>设计系统：</span>
           <SelectTrigger
             className="col-span-2"
             data-testid="design-system-select"
           >
-            <SelectValue placeholder="No design system" />
+            <SelectValue placeholder="不使用设计系统" />
           </SelectTrigger>
         </div>
       ) : (
@@ -101,13 +101,13 @@ function DesignSystemSelector({
             className="h-auto w-auto justify-start gap-1 border-0 bg-transparent px-0 py-0 text-gray-500 shadow-none hover:text-gray-700 focus:ring-0 focus:ring-offset-0 dark:text-zinc-400 dark:hover:text-zinc-200 [&>svg]:hidden"
             data-testid="design-system-select"
           >
-            <span>+ Add design system</span>
+            <span>+ 添加设计系统</span>
           </SelectTrigger>
         </div>
       )}
       <SelectContent>
         <SelectGroup>
-          <SelectItem value={NO_DESIGN_SYSTEM}>No design system</SelectItem>
+          <SelectItem value={NO_DESIGN_SYSTEM}>不使用设计系统</SelectItem>
           {designSystems.map((designSystem) => (
             <SelectItem key={designSystem.id} value={designSystem.id}>
               {designSystem.name}
@@ -117,11 +117,11 @@ function DesignSystemSelector({
         <SelectSeparator />
         <SelectGroup>
           <SelectItem value={ADD_NEW} data-testid="design-system-add-new">
-            + New design system…
+            + 新建设计系统…
           </SelectItem>
           {designSystems.length > 0 && (
             <SelectItem value={MANAGE} data-testid="design-system-manage">
-              Manage design systems…
+              管理设计系统…
             </SelectItem>
           )}
         </SelectGroup>

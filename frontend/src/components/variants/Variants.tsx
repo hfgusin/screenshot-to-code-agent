@@ -165,7 +165,7 @@ function Variants() {
               <div className="flex items-center px-2 py-1 bg-white dark:bg-zinc-900">
                 <span className="inline-flex min-w-0 items-center text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
                   <span className={`w-2 h-2 rounded-full mr-1.5 ${statusColor}`} />
-                  Option {index + 1}
+                  方案 {index + 1}
                   {index < 9 && (
                     <span className="text-xs text-gray-400 dark:text-gray-500 font-mono ml-1">
                       (⌥{index + 1})
@@ -177,7 +177,7 @@ function Variants() {
                     className="ml-auto shrink-0 inline-flex items-center"
                     role="status"
                     aria-live="polite"
-                    aria-label="Working"
+                    aria-label="处理中"
                   >
                     <WorkingPulse />
                   </div>

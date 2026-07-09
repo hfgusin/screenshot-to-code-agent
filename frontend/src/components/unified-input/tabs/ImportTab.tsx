@@ -22,12 +22,12 @@ function ImportTab({ importFromCode }: Props) {
 
   const doImport = () => {
     if (code === "") {
-      toast.error("Please paste in some code");
+      toast.error("请先粘贴代码");
       return;
     }
 
     if (stack === undefined) {
-      toast.error("Please select your stack");
+      toast.error("请选择技术栈");
       return;
     }
 
@@ -84,7 +84,7 @@ function ImportTab({ importFromCode }: Props) {
             </div>
 
             <div className="text-center">
-              <h3 className="text-gray-700 dark:text-zinc-200 font-medium">Import Existing Code</h3>
+              <h3 className="text-gray-700 dark:text-zinc-200 font-medium">导入现有代码</h3>
             </div>
           </div>
 
@@ -103,7 +103,7 @@ function ImportTab({ importFromCode }: Props) {
                 onChange={(e) => setCode(e.target.value)}
                 onKeyDown={handleKeyDown}
                 className="w-full h-48 font-mono text-sm resize-none"
-                placeholder="Paste your HTML code here or drag/drop a .html file..."
+                placeholder="在这里粘贴 HTML 代码，或拖入 .html 文件..."
                 data-testid="import-input"
               />
             </div>
@@ -111,7 +111,7 @@ function ImportTab({ importFromCode }: Props) {
             <OutputSettingsSection
               stack={stack}
               setStack={(config: Stack) => setStack(config)}
-              label="Stack:"
+              label="技术栈："
               shouldDisableUpdates={false}
             />
 
@@ -121,11 +121,11 @@ function ImportTab({ importFromCode }: Props) {
               size="lg"
               data-testid="import-submit"
             >
-              Import Code
+              导入代码
             </Button>
 
             <p className="text-xs text-gray-400 dark:text-zinc-500 text-center">
-              Press Cmd/Ctrl + Enter to import
+              按 Cmd/Ctrl + Enter 导入
             </p>
           </div>
         </div>

@@ -69,8 +69,8 @@ describe("History Utils", () => {
     expect(renderHistory(Object.values(basicLinearHistory))).toEqual([
       {
         ...basicLinearHistory["0"],
-        type: "Create",
-        summary: "Create",
+        type: "创建",
+        summary: "创建",
         selectedElementTag: null,
         parentVersion: null,
         images: [""],
@@ -78,7 +78,7 @@ describe("History Utils", () => {
       },
       {
         ...basicLinearHistory["1"],
-        type: "Edit",
+        type: "编辑",
         summary: "use better icons",
         selectedElementTag: null,
         parentVersion: null,
@@ -87,7 +87,7 @@ describe("History Utils", () => {
       },
       {
         ...basicLinearHistory["2"],
-        type: "Edit",
+        type: "编辑",
         summary: "make text red",
         selectedElementTag: null,
         parentVersion: null,
@@ -100,8 +100,8 @@ describe("History Utils", () => {
     expect(renderHistory(Object.values(basicLinearHistoryWithCode))).toEqual([
       {
         ...basicLinearHistoryWithCode["0"],
-        type: "Imported from code",
-        summary: "Imported from code",
+        type: "从代码导入",
+        summary: "从代码导入",
         selectedElementTag: null,
         parentVersion: null,
         images: [],
@@ -109,7 +109,7 @@ describe("History Utils", () => {
       },
       {
         ...basicLinearHistoryWithCode["1"],
-        type: "Edit",
+        type: "编辑",
         summary: "use better icons",
         selectedElementTag: null,
         parentVersion: null,
@@ -118,7 +118,7 @@ describe("History Utils", () => {
       },
       {
         ...basicLinearHistoryWithCode["2"],
-        type: "Edit",
+        type: "编辑",
         summary: "make text red",
         selectedElementTag: null,
         parentVersion: null,
@@ -131,8 +131,8 @@ describe("History Utils", () => {
     expect(renderHistory(Object.values(basicBranchingHistory))).toEqual([
       {
         ...basicBranchingHistory["0"],
-        type: "Create",
-        summary: "Create",
+        type: "创建",
+        summary: "创建",
         selectedElementTag: null,
         parentVersion: null,
         images: [""],
@@ -140,7 +140,7 @@ describe("History Utils", () => {
       },
       {
         ...basicBranchingHistory["1"],
-        type: "Edit",
+        type: "编辑",
         summary: "use better icons",
         selectedElementTag: null,
         parentVersion: null,
@@ -149,7 +149,7 @@ describe("History Utils", () => {
       },
       {
         ...basicBranchingHistory["2"],
-        type: "Edit",
+        type: "编辑",
         summary: "make text red",
         selectedElementTag: null,
         parentVersion: null,
@@ -158,7 +158,7 @@ describe("History Utils", () => {
       },
       {
         ...basicBranchingHistory["3"],
-        type: "Edit",
+        type: "编辑",
         summary: "make text green",
         selectedElementTag: null,
         parentVersion: 2,
