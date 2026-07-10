@@ -21,6 +21,11 @@ import {
   registerAssetIds,
   toRequestHistory,
 } from "./lib/prompt-history";
+import {
+  consolidateAgentMemory,
+  createEmptyAgentMemory,
+  prepareMemoryForRequest,
+} from "./lib/agent-memory";
 // import TipLink from "./components/messages/TipLink";
 import { useAppStore } from "./store/app-store";
 import { useProjectStore } from "./store/project-store";
@@ -54,6 +59,7 @@ import SettingsTab from "./components/settings/SettingsTab";
 import DesignSystemsModal from "./components/settings/DesignSystemsModal";
 import { Commit } from "./components/commits/types";
 import { createCommit } from "./components/commits/utils";
+import { applySafeDirectTextEdit } from "./lib/direct-text-edit";
 
 function createEmptyDesignSession(): DesignSession {
   return {
@@ -64,6 +70,7 @@ function createEmptyDesignSession(): DesignSession {
     latestDelta: "",
     sessionSummary: "",
     revisionLog: [],
+    memory: createEmptyAgentMemory(),
     lastUpdatedAt: null,
   };
 }
@@ -106,6 +113,7 @@ function buildSeededDesignSession(
     pendingQuestion:
       extras?.pendingQuestion ?? existingSession?.pendingQuestion ?? "",
     reviewSummary: extras?.reviewSummary ?? existingSession?.reviewSummary ?? "",
+    memory: existingSession?.memory ?? createEmptyAgentMemory(),
     lastUpdatedAt: new Date().toISOString(),
   };
 }
@@ -612,6 +620,16 @@ function App() {
       requestParams.generationType === "create" ? null : head;
     const requestDesignSession =
       requestParams.designSession ?? designSession;
+    const requestText =
+      requestParams.prompt.fullText || requestParams.prompt.text || "";
+    const requestMemory = prepareMemoryForRequest(
+      requestDesignSession,
+      requestText
+    );
+    const requestDesignSessionWithMemory = {
+      ...requestDesignSession,
+      memory: requestMemory,
+    };
 
     const selectedDesignSystem = designSystems.find(
       (designSystem) => designSystem.id === settings.selectedDesignSystemId
@@ -629,7 +647,7 @@ function App() {
       intentDecision,
       ...settings,
       designSystem: selectedDesignSystem?.content ?? null,
-      designSession: requestDesignSession,
+      designSession: requestDesignSessionWithMemory,
     };
     const promptWithMetadata = {
       ...requestParams.prompt,
@@ -640,7 +658,7 @@ function App() {
       previewSelfCheckEnabled: true,
       turnIntent,
       intentDecision,
-      designSessionSnapshot: requestDesignSession,
+      designSessionSnapshot: requestDesignSessionWithMemory,
     };
     // Mirror the backend's default variant counts to avoid UI flashes while
     // still allowing the backend to expand the count via configuration.
@@ -824,6 +842,8 @@ function App() {
           },
           metrics: {
             runId,
+            traceId: backendMetrics.traceId,
+            tracePath: backendMetrics.tracePath,
             durationMs: Math.max(0, Date.now() - requestStartedAt),
             promptStrategy: backendMetrics.promptStrategy,
             promptMetrics: backendMetrics.promptMetrics,
@@ -846,22 +866,32 @@ function App() {
             buildAssistantHistoryMessage(renderableCode || currentCode)
           );
         }
-        setDesignSession((prev) => ({
-          ...prev,
-          lastIntent: turnIntent,
-          intentConfidence: intentDecision.confidence,
-          intentReason: intentDecision.reason,
-          intentSignals: intentDecision.signals,
-          intentNeedsClarification: intentDecision.shouldAskQuestion,
-          pendingQuestion:
-            intentDecision.shouldAskQuestion
-              ? (requestParams.prompt.fullText ||
-                  requestParams.prompt.text ||
-                  "").trim()
-              : "",
-          reviewSummary,
-          lastUpdatedAt: new Date().toISOString(),
-        }));
+        setDesignSession((prev) => {
+          const memory = consolidateAgentMemory({
+            previousMemory: prev.memory,
+            userText: requestText,
+            generationType: requestParams.generationType,
+            turnIntent,
+            code: renderableCode || currentCode,
+            reviewSummary,
+            selfCheck,
+          });
+          return {
+            ...prev,
+            memory,
+            lastIntent: turnIntent,
+            intentConfidence: intentDecision.confidence,
+            intentReason: intentDecision.reason,
+            intentSignals: intentDecision.signals,
+            intentNeedsClarification: intentDecision.shouldAskQuestion,
+            pendingQuestion:
+              intentDecision.shouldAskQuestion
+                ? requestText.trim()
+                : "",
+            reviewSummary,
+            lastUpdatedAt: new Date().toISOString(),
+          };
+        });
         finishThinkingEvent(variantIndex, "complete");
         finishAssistantEvent(variantIndex, "complete");
         finishToolEvent(variantIndex, "complete");
@@ -902,6 +932,8 @@ function App() {
           },
           metrics: {
             runId,
+            traceId: backendMetrics.traceId,
+            tracePath: backendMetrics.tracePath,
             promptStrategy: backendMetrics.promptStrategy,
             promptMetrics: backendMetrics.promptMetrics,
             stageTimings: backendMetrics.stageTimings,
@@ -1021,8 +1053,15 @@ function App() {
           cancelCodeGenerationAndReset(commit);
           return;
         }
-        setDraftHead(null);
-        setHead(commit.hash);
+        const requiresEditReview =
+          commit.type === "ai_edit" && !!commit.inputs.editReview;
+        if (!requiresEditReview) {
+          setDraftHead(null);
+          setHead(commit.hash);
+        } else {
+          setDraftHead(commit.hash);
+          toast.success("修改草稿已生成，请对比后确认应用。");
+        }
         setDesignSession((prev) => ({
           ...prev,
           goal: prev.goal.trim() || requestParams.prompt.text.trim() || prev.goal,
@@ -1058,7 +1097,7 @@ function App() {
     });
     const turnIntent = intentDecision.intent;
 
-    const seededDesignSession = appendRevisionEntry(
+    const seededDesignSessionBase = appendRevisionEntry(
       buildSeededDesignSession(textPrompt, {
       ...createEmptyDesignSession(),
       goal: textPrompt.trim() || "根据提供的参考图生成一版完整且精致的 UI。",
@@ -1072,6 +1111,15 @@ function App() {
       }),
       summarizeDesignRevision("create", textPrompt)
     );
+    const seededDesignSession = {
+      ...seededDesignSessionBase,
+      memory: consolidateAgentMemory({
+        previousMemory: seededDesignSessionBase.memory,
+        userText: textPrompt,
+        generationType: "create",
+        turnIntent,
+      }),
+    };
     setDesignSession(seededDesignSession);
     const revisionId = nanoid();
 
@@ -1140,7 +1188,7 @@ function App() {
       currentCode: "",
     });
     const turnIntent = intentDecision.intent;
-    const seededDesignSession = appendRevisionEntry(
+    const seededDesignSessionBase = appendRevisionEntry(
       buildSeededDesignSession(text, {
       ...createEmptyDesignSession(),
       goal: text.trim() || "根据当前需求说明生成一版完整且精致的 UI。",
@@ -1154,6 +1202,15 @@ function App() {
       }),
       summarizeDesignRevision("create", text)
     );
+    const seededDesignSession = {
+      ...seededDesignSessionBase,
+      memory: consolidateAgentMemory({
+        previousMemory: seededDesignSessionBase.memory,
+        userText: text,
+        generationType: "create",
+        turnIntent,
+      }),
+    };
     setDesignSession(seededDesignSession);
     const revisionId = nanoid();
     doGenerateCode({
@@ -1202,15 +1259,96 @@ function App() {
       (variant) => variant.code || ""
     );
 
+    const directTextEdit =
+      selectedElement && updateImages.length === 0
+        ? applySafeDirectTextEdit({
+            code: currentCode,
+            instruction: updateInstruction,
+            selectedText: selectedElement.textContent || "",
+            selectedOuterHTML: selectedElement.outerHTML,
+          })
+        : null;
+
+    if (directTextEdit) {
+      const selectedElementHtml = selectedElement?.outerHTML;
+      const selectedElementContext =
+        selectedElement?.isConnected && selectedElement
+          ? describeElementContext(selectedElement)
+          : undefined;
+      const selectedVariant =
+        currentCommit.variants[currentCommit.selectedVariantIndex];
+      const localHistory = [
+        ...cloneVariantHistory(selectedVariant.history),
+        buildUserHistoryMessage(updateInstruction),
+        buildAssistantHistoryMessage(
+          `已将“${directTextEdit.oldText}”替换为“${directTextEdit.newText}”。`
+        ),
+      ];
+      const nextSession = appendRevisionEntry(
+        designSession,
+        summarizeDesignRevision("update", updateInstruction)
+      );
+      const commit = createCommit({
+        type: "ai_edit",
+        parentHash: head,
+        variants: [
+          {
+            code: directTextEdit.code,
+            history: localHistory,
+            status: "complete",
+            completedAt: Date.now(),
+            diagnostics: {
+              stage: "direct_text_edit",
+              message: "明确文案已在本地安全替换，未调用 AI。",
+              selfCheckStatus: "pass",
+              selfCheckSummary: "已完成唯一定位的文案替换。",
+              localCheckOnly: true,
+            },
+          },
+        ],
+        inputs: {
+          text: updateInstruction,
+          fullText: updateInstruction,
+          images: [],
+          videos: [],
+          selectedElementHtml,
+          selectedElementContext,
+          editReview: {
+            beforeText: directTextEdit.oldText,
+            afterText: directTextEdit.newText,
+            source: "direct",
+          },
+          workspaceId,
+          revisionId: nanoid(),
+          parentCommitHash: head,
+          previewSelfCheckEnabled: true,
+          turnIntent: "modify",
+          designSessionSnapshot: nextSession,
+        },
+      });
+      addCommit(commit);
+      setDraftHead(commit.hash);
+      setDesignSession(nextSession);
+      setSelectedElement(null);
+      disableInSelectAndEditMode();
+      setUpdateInstruction("");
+      toast.success("文案已即时修改，请确认后应用。");
+      return;
+    }
+
     let modifiedUpdateInstruction = updateInstruction;
     let selectedElementHtml: string | undefined;
     let selectedElementContext: string | undefined;
+    let selectedElementText: string | undefined;
 
     // Send in a reference to the selected element if it exists. Selection
     // visuals are overlays, so the element's outerHTML is already clean.
     if (selectedElement) {
       const elementHtml = selectedElement.outerHTML;
       selectedElementHtml = elementHtml;
+      selectedElementText = selectedElement.textContent
+        ?.replace(/\s+/g, " ")
+        .trim();
       selectedElementContext = selectedElement.isConnected
         ? describeElementContext(selectedElement)
         : undefined;
@@ -1250,7 +1388,7 @@ function App() {
       fullText: modifiedUpdateInstruction,
     });
     const turnIntent = intentDecision.intent;
-    const seededUpdateSession = appendRevisionEntry(
+    const seededUpdateSessionBase = appendRevisionEntry(
       {
         ...designSession,
         goal:
@@ -1270,6 +1408,15 @@ function App() {
       },
       summarizeDesignRevision("update", modifiedUpdateInstruction)
     );
+    const seededUpdateSession = {
+      ...seededUpdateSessionBase,
+      memory: consolidateAgentMemory({
+        previousMemory: designSession.memory,
+        userText: modifiedUpdateInstruction,
+        generationType: "update",
+        turnIntent,
+      }),
+    };
     setDesignSession(seededUpdateSession);
     const revisionId = nanoid();
     const designUpdateIntent = parseDesignUpdateIntent(
@@ -1287,6 +1434,9 @@ function App() {
         videos: [],
         selectedElementHtml,
         selectedElementContext,
+        editReview: selectedElementText
+          ? { beforeText: selectedElementText, source: "ai" }
+          : undefined,
         designUpdateIntent,
         workspaceId,
         revisionId,
@@ -1311,6 +1461,90 @@ function App() {
             content: currentCode,
           }
         : undefined,
+    });
+  }
+
+  function applyPendingEdit() {
+    const pendingHash = useProjectStore.getState().draftHead;
+    if (!pendingHash) return;
+    const pendingCommit = useProjectStore.getState().commits[pendingHash];
+    if (!pendingCommit) return;
+    setHead(pendingHash);
+    resetDraftHead();
+    setUpdateInstruction("");
+    setUpdateImages([]);
+    toast.success("修改已应用，并保存为新版本。");
+  }
+
+  function discardPendingEdit() {
+    const project = useProjectStore.getState();
+    const pendingHash = project.draftHead;
+    if (!pendingHash) return;
+    const pendingCommit = project.commits[pendingHash];
+    const parentHash = pendingCommit?.parentHash;
+    removeCommit(pendingHash);
+    resetDraftHead();
+    if (parentHash) {
+      setHead(parentHash);
+      const parentSnapshot = project.commits[parentHash]?.inputs?.designSessionSnapshot;
+      if (parentSnapshot) setDesignSession(parentSnapshot);
+    }
+    setUpdateInstruction("");
+    setUpdateImages([]);
+    setAppState(AppState.CODE_READY);
+    toast("已放弃本次修改。");
+  }
+
+  function regeneratePendingEdit() {
+    const project = useProjectStore.getState();
+    const pendingHash = project.draftHead;
+    if (!pendingHash) return;
+    const pendingCommit = project.commits[pendingHash];
+    if (!pendingCommit || pendingCommit.type !== "ai_edit") return;
+    const parentHash = pendingCommit.parentHash;
+    const parentCommit = parentHash ? project.commits[parentHash] : undefined;
+    if (!parentHash || !parentCommit) {
+      toast.error("找不到修改前的版本，无法重新生成。");
+      return;
+    }
+
+    const inputs = pendingCommit.inputs;
+    const parentVariant = parentCommit.variants[parentCommit.selectedVariantIndex];
+    const parentHistory = cloneVariantHistory(parentVariant.history);
+    const retryHistory = [
+      ...parentHistory,
+      buildUserHistoryMessage(inputs.fullText || inputs.text),
+    ];
+    const revisionId = nanoid();
+
+    removeCommit(pendingHash);
+    resetDraftHead();
+    setHead(parentHash);
+    setUpdateInstruction(inputs.text);
+    doGenerateCode({
+      generationType: "update",
+      inputMode,
+      prompt: {
+        ...inputs,
+        revisionId,
+        parentCommitHash: parentHash,
+      },
+      revisionId,
+      parentCommitHash: parentHash,
+      previewSelfCheckEnabled: true,
+      designSession: inputs.designSessionSnapshot,
+      turnIntent: inputs.turnIntent,
+      intentDecision: inputs.intentDecision,
+      history:
+        parentHistory.length === 0
+          ? []
+          : toRequestHistory(retryHistory, getAssetsById),
+      optionCodes: parentCommit.variants.map((variant) => variant.code || ""),
+      variantHistory: retryHistory,
+      fileState: {
+        path: "index.html",
+        content: parentVariant.code,
+      },
     });
   }
 
@@ -1536,6 +1770,10 @@ function App() {
             {isCodingOrReady && (
               <PreviewPane
                 settings={settings}
+                onSubmitSelectionEdit={doUpdate}
+                onApplyPendingEdit={applyPendingEdit}
+                onRegeneratePendingEdit={regeneratePendingEdit}
+                onDiscardPendingEdit={discardPendingEdit}
                 onOpenVersions={() => {
                   setIsHistoryOpen(true);
                   setMobilePane("chat");

@@ -1,7 +1,7 @@
 from typing import Optional
 
 from babel_cdn import normalize_babel_cdn
-from preview_screenshot.base import ScreenshotBackend
+from preview_screenshot.base import ScreenshotBackend, ScreenshotCaptureResult
 from preview_screenshot.playwright_backend import PlaywrightBackend
 
 # The active backend. Defaults to local Chromium; a deployment can swap in an
@@ -48,4 +48,17 @@ async def capture_preview_screenshot(
     is invisible to callers. Normalizes the Babel CDN first so generated React
     pages (old and new) actually mount before we capture.
     """
-    return await _backend.capture(normalize_babel_cdn(html), device, full_page)
+    result = await capture_preview_result(html, device, full_page)
+    return result.image_bytes
+
+
+async def capture_preview_result(
+    html: str,
+    device: str = "desktop",
+    full_page: bool = True,
+) -> ScreenshotCaptureResult:
+    """Render HTML to PNG and include browser diagnostics when available."""
+    result = await _backend.capture(normalize_babel_cdn(html), device, full_page)
+    if isinstance(result, ScreenshotCaptureResult):
+        return result
+    return ScreenshotCaptureResult(image_bytes=result, diagnostics=[])

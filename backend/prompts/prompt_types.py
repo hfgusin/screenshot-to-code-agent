@@ -34,6 +34,87 @@ class PromptHistoryMessage(TypedDict):
     videos: List[str]
 
 
+AgentMemorySource = Literal[
+    "user_correction",
+    "user_instruction",
+    "repeated_pattern",
+    "model_inference",
+    "code_state",
+    "tool_result",
+]
+
+AgentMemoryStatus = Literal["active", "tentative", "superseded", "rejected"]
+
+AgentLongMemoryType = Literal[
+    "business_rule",
+    "user_preference",
+    "design_constraint",
+    "product_semantics",
+]
+
+
+class AgentLongMemoryEntry(TypedDict):
+    id: str
+    type: AgentLongMemoryType
+    text: str
+    confidence: float
+    source: AgentMemorySource
+    status: AgentMemoryStatus
+    applies_to: List[str]
+    created_at: str
+    last_confirmed_at: str
+
+
+class AgentShortMemoryEntry(TypedDict):
+    id: str
+    text: str
+    source: AgentMemorySource
+    created_at: str
+    expires_after_turns: int
+
+
+class AgentArtifactMemory(TypedDict, total=False):
+    summary: str
+    sections: List[str]
+    active_assets: List[str]
+    last_updated_at: str
+
+
+class AgentFailureMemoryEntry(TypedDict):
+    id: str
+    text: str
+    tool_name: str
+    source: AgentMemorySource
+    created_at: str
+    status: Literal["active", "resolved"]
+
+
+class AgentCandidateMemoryEntry(TypedDict):
+    id: str
+    text: str
+    reason: str
+    confidence: float
+    source: AgentMemorySource
+    created_at: str
+
+
+class AgentMemoryConflict(TypedDict):
+    id: str
+    long_memory_id: str
+    text: str
+    severity: Literal["low", "medium", "high"]
+    created_at: str
+
+
+class AgentMemory(TypedDict):
+    short_term: List[AgentShortMemoryEntry]
+    long_term: List[AgentLongMemoryEntry]
+    artifact: AgentArtifactMemory
+    failures: List[AgentFailureMemoryEntry]
+    candidates: List[AgentCandidateMemoryEntry]
+    conflicts: List[AgentMemoryConflict]
+
+
 class DesignSession(TypedDict, total=False):
     """Persistent design intent carried across turns."""
 
@@ -51,6 +132,7 @@ class DesignSession(TypedDict, total=False):
     intent_needs_clarification: bool
     pending_question: str
     review_summary: str
+    memory: AgentMemory
 
 
 class DesignUpdateIntent(TypedDict):

@@ -3,7 +3,7 @@ import { useProjectStore } from "../../store/project-store";
 import { AppState, DesignSession } from "../../types";
 import { Button } from "../ui/button";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { LuMousePointerClick, LuRefreshCw, LuArrowUp, LuX } from "react-icons/lu";
+import { LuMaximize2, LuMousePointerClick, LuRefreshCw, LuArrowUp } from "react-icons/lu";
 import { toast } from "react-hot-toast";
 
 import Variants from "../variants/Variants";
@@ -21,6 +21,10 @@ import DesignSystemSelector, {
 import DesignSessionPanel from "../design-session/DesignSessionPanel";
 import RecentWorkspacesPanel from "../workspace/RecentWorkspacesPanel";
 import { WorkspaceSummary } from "../../lib/workspace-storage";
+import {
+  describeEditableElement,
+  getParentEditableTarget,
+} from "../select-and-edit/utils";
 
 interface SidebarProps {
   doUpdate: (instruction: string) => void | Promise<void>;
@@ -209,6 +213,12 @@ function Sidebar({
   const selectedVariantEvents = selectedVariant?.agentEvents ?? [];
   const selectedVariantDiagnostics = selectedVariant?.diagnostics;
   const selectedVariantMetrics = selectedVariant?.metrics;
+  const selectedElementDescription = selectedElement
+    ? describeEditableElement(selectedElement)
+    : null;
+  const parentEditableTarget = selectedElement
+    ? getParentEditableTarget(selectedElement)
+    : null;
   const showWorkingIndicator =
     appState === AppState.CODING &&
     selectedVariantEvents.length === 0 &&
@@ -225,7 +235,8 @@ function Sidebar({
   const isFirstGeneration = currentCommit?.type === "ai_create";
   const isViewingOlderVersion =
     activeCommitHash !== null && activeCommitHash !== latestCommitHash;
-  const isDraftInProgress = draftHead !== null && draftHead !== head;
+  const isDraftInProgress =
+    appState === AppState.CODING && draftHead !== null && draftHead !== head;
 
   // Compute version number for the active commit being previewed
   const currentVersionNumber = (() => {
@@ -658,23 +669,40 @@ function Sidebar({
                   <div className="flex items-center justify-between rounded-xl border border-violet-300 dark:border-violet-600 bg-violet-50 dark:bg-violet-900/20 px-3 py-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <LuMousePointerClick className="w-3.5 h-3.5 text-violet-600 dark:text-violet-400 shrink-0" />
-                      <span className="text-sm text-violet-700 dark:text-violet-300 truncate">
-                        已选中：<code className="font-mono text-xs bg-violet-100 dark:bg-violet-800/50 px-1.5 py-0.5 rounded">&lt;{selectedElement.tagName.toLowerCase()}&gt;</code>
+                      <span className="min-w-0 text-sm text-violet-700 dark:text-violet-300">
+                        <span className="font-semibold">已选择{selectedElementDescription?.kind}</span>
+                        {selectedElementDescription?.preview !== "无可见文字" && (
+                          <span className="ml-1 text-violet-600 dark:text-violet-400">
+                            “{selectedElementDescription?.preview}”
+                          </span>
+                        )}
                       </span>
                     </div>
-                    <button
-                      onClick={() => setSelectedElement(null)}
-                      className="shrink-0 ml-3 p-0.5 text-violet-400 hover:text-violet-700 dark:hover:text-violet-200 transition-colors"
-                      title="清除选区"
-                    >
-                      <LuX className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="ml-3 flex shrink-0 items-center gap-1">
+                      {parentEditableTarget && (
+                        <button
+                          onClick={() => setSelectedElement(parentEditableTarget)}
+                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-violet-600 hover:bg-violet-100 dark:text-violet-300 dark:hover:bg-violet-900/40"
+                          title="扩大到包含这段内容的上一级区域"
+                        >
+                          <LuMaximize2 className="h-3.5 w-3.5" />
+                          扩大范围
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setSelectedElement(null)}
+                        className="rounded-md px-2 py-1 text-xs text-violet-500 hover:bg-violet-100 hover:text-violet-800 dark:text-violet-400 dark:hover:bg-violet-900/40 dark:hover:text-violet-200"
+                        title="清除当前选择后重新选择"
+                      >
+                        重新选择
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <div className="flex items-center justify-between rounded-xl border border-violet-200 dark:border-violet-700 bg-violet-50 dark:bg-violet-900/20 px-3 py-2">
                     <div className="flex items-center gap-2">
                       <LuMousePointerClick className="w-3.5 h-3.5 text-violet-500 dark:text-violet-400 shrink-0" />
-                      <span className="text-sm font-medium text-violet-700 dark:text-violet-300">点击一个元素开始局部编辑</span>
+                      <span className="text-sm font-medium text-violet-700 dark:text-violet-300">请在预览中点击要修改的文字或区域</span>
                     </div>
                     <button
                       onClick={toggleInSelectAndEditMode}
@@ -695,7 +723,7 @@ function Sidebar({
                 ref={textareaRef}
                 placeholder={
                   inSelectAndEditMode && selectedElement
-                    ? `请描述你想对选中的 <${selectedElement.tagName.toLowerCase()}> 元素做什么修改...`
+                    ? `告诉 AI 你想怎样修改这段${selectedElementDescription?.kind || "内容"}...`
                     : "告诉 AI 你想改什么..."
                 }
                 onChange={(e) => {
@@ -727,7 +755,7 @@ function Sidebar({
                         ? "bg-violet-100 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400"
                         : "text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
                     }`}
-                      title={inSelectAndEditMode ? "退出选区模式" : "在预览里选中一个元素，让这次修改更精准"}
+                      title={inSelectAndEditMode ? "退出选择并修改" : "在预览中选择内容，让这次修改更精准"}
                   >
                     <LuMousePointerClick className="w-[18px] h-[18px]" />
                   </button>

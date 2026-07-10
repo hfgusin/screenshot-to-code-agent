@@ -3,12 +3,20 @@ from typing import Optional
 
 from playwright.async_api import (
     Browser,
+    ConsoleMessage,
+    Error,
+    Request,
+    Response,
     Playwright,
     TimeoutError as PlaywrightTimeoutError,
     async_playwright,
 )
 
-from preview_screenshot.base import VIEWPORT_SIZES
+from preview_screenshot.base import (
+    PreviewDiagnostic,
+    ScreenshotCaptureResult,
+    VIEWPORT_SIZES,
+)
 
 PAGE_LOAD_TIMEOUT_MS = 15000
 RENDER_SETTLE_MS = 250
@@ -62,13 +70,65 @@ class PlaywrightBackend:
         html: str,
         device: str = "desktop",
         full_page: bool = True,
-    ) -> bytes:
+    ) -> ScreenshotCaptureResult:
         browser = await self._get_browser()
         width, height = VIEWPORT_SIZES.get(device, VIEWPORT_SIZES["desktop"])
         page = await browser.new_page(
             viewport={"width": width, "height": height},
             device_scale_factor=1,
         )
+        diagnostics: list[PreviewDiagnostic] = []
+
+        def add_diagnostic(diagnostic: PreviewDiagnostic) -> None:
+            if len(diagnostics) >= 20:
+                return
+            diagnostics.append(diagnostic)
+
+        def handle_console(message: ConsoleMessage) -> None:
+            if message.type != "error":
+                return
+            add_diagnostic(
+                PreviewDiagnostic(
+                    type="console_error",
+                    message=message.text,
+                    url=message.location.get("url") or None,
+                )
+            )
+
+        def handle_page_error(error: Error) -> None:
+            add_diagnostic(
+                PreviewDiagnostic(
+                    type="page_error",
+                    message=str(error),
+                )
+            )
+
+        def handle_request_failed(request: Request) -> None:
+            failure = request.failure
+            add_diagnostic(
+                PreviewDiagnostic(
+                    type="request_failed",
+                    message=failure or "Request failed",
+                    url=request.url,
+                )
+            )
+
+        def handle_response(response: Response) -> None:
+            if response.status < 400:
+                return
+            add_diagnostic(
+                PreviewDiagnostic(
+                    type="request_error",
+                    message=f"HTTP {response.status} while loading resource",
+                    url=response.url,
+                    status=response.status,
+                )
+            )
+
+        page.on("console", handle_console)
+        page.on("pageerror", handle_page_error)
+        page.on("requestfailed", handle_request_failed)
+        page.on("response", handle_response)
         try:
             try:
                 await page.set_content(
@@ -85,6 +145,10 @@ class PlaywrightBackend:
             except Exception:
                 pass
             await page.wait_for_timeout(RENDER_SETTLE_MS)
-            return await page.screenshot(full_page=full_page, type="png")
+            image_bytes = await page.screenshot(full_page=full_page, type="png")
+            return ScreenshotCaptureResult(
+                image_bytes=image_bytes,
+                diagnostics=diagnostics,
+            )
         finally:
             await page.close()

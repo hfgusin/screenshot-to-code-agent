@@ -3,6 +3,11 @@ from typing import cast
 from openai.types.chat import ChatCompletionMessageParam
 
 from prompts import system_prompt
+from prompts.budget import (
+    HISTORY_ASSISTANT_BUDGET_CHARS,
+    HISTORY_USER_BUDGET_CHARS,
+    clamp_text,
+)
 from prompts.design_session import (
     build_design_update_intent_block,
     build_design_session_prompt_block,
@@ -14,6 +19,7 @@ from prompts.image_assets import (
     extract_latest_image_urls_from_history,
 )
 from prompts.design_system import build_design_system_prompt_block
+from prompts.memory import build_agent_memory_prompt_block
 from prompts.policies import build_selected_stack_policy, build_user_image_policy
 from prompts.prompt_types import (
     DesignSession,
@@ -35,12 +41,34 @@ def _compress_history(
         return history, 0
 
     first_user = history[first_user_index]
-    trailing_history = history[first_user_index + 1 :]
-    keep_count = max(0, MAX_PROMPT_HISTORY_MESSAGES - 1)
-    kept_tail = trailing_history[-keep_count:] if keep_count > 0 else []
-    kept = [first_user] + kept_tail
-    omitted = len(history) - len(kept)
+    trailing_history = history[first_user_index + 1 :] # 截取除第一个用户消息外的历史消息
+    keep_count = max(0, MAX_PROMPT_HISTORY_MESSAGES - 1) # 计算需要保留的消息数量
+    kept_tail = trailing_history[-keep_count:] if keep_count > 0 else [] # 截取需要保留的消息
+    kept = [first_user] + kept_tail # 将第一个用户消息和需要保留的消息合并
+    omitted = len(history) - len(kept) # 计算被忽略的消息数量
     return kept, omitted
+
+
+def _apply_history_text_budget(
+    item: PromptHistoryMessage,
+) -> tuple[PromptHistoryMessage, int]:
+    budget = (
+        HISTORY_ASSISTANT_BUDGET_CHARS
+        if item["role"] == "assistant"
+        else HISTORY_USER_BUDGET_CHARS
+    )
+    result = clamp_text(
+        item.get("text", ""),
+        budget,
+        "history message omitted for prompt budget",
+    )
+    if result.omitted_chars <= 0:
+        return item, 0
+    budgeted_item: PromptHistoryMessage = {
+        **item,
+        "text": result.text,
+    }
+    return budgeted_item, result.omitted_chars
 
 
 def build_update_prompt_from_history(
@@ -60,6 +88,13 @@ def build_update_prompt_from_history(
         raise ValueError("Update history must include at least one user message")
 
     history, omitted_message_count = _compress_history(history, first_user_index)
+    budgeted_history: list[PromptHistoryMessage] = []
+    omitted_history_chars = 0
+    for item in history:
+        budgeted_item, omitted_chars = _apply_history_text_budget(item)
+        budgeted_history.append(budgeted_item)
+        omitted_history_chars += omitted_chars
+    history = budgeted_history
     prompt_messages: Prompt = [
         cast(
             ChatCompletionMessageParam,
@@ -83,6 +118,20 @@ def build_update_prompt_from_history(
                 },
             )
         )
+    if omitted_history_chars > 0:
+        prompt_messages.append(
+            cast(
+                ChatCompletionMessageParam,
+                {
+                    "role": "system",
+                    "content": (
+                        f"History text was trimmed for prompt budget. "
+                        f"{omitted_history_chars} character(s) were omitted from retained history messages. "
+                        "Prioritize the latest request, confirmed long-term memory, and the current draft state."
+                    ),
+                },
+            )
+        )
     selected_stack = build_selected_stack_policy(stack)
     image_policy = build_user_image_policy(image_generation_enabled)
     design_system_block = build_design_system_prompt_block(design_system)
@@ -90,6 +139,7 @@ def build_update_prompt_from_history(
         design_session,
         workspace_id=(prompt or {}).get("workspace_id"),
     )
+    memory_block = build_agent_memory_prompt_block(design_session)
     image_asset_block = build_image_asset_guidance_block(
         extract_latest_image_urls_from_history(history),
         heading="Current image assets from the latest draft",
@@ -123,6 +173,7 @@ def build_update_prompt_from_history(
                     selected_stack,
                     image_policy,
                     design_session_block.strip(),
+                    memory_block.strip(),
                     multi_turn_block.strip(),
                 ]
                 if part.strip()

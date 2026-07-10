@@ -37,6 +37,22 @@ const CONTAINER_TAGS = new Set([
 ]);
 const MEDIA_TAGS = new Set(["canvas", "img", "picture", "svg", "video"]);
 const HEADING_TAGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
+const TEXT_BOUNDARY_TAGS = new Set([
+  ...HEADING_TAGS,
+  "a",
+  "button",
+  "label",
+  "li",
+  "p",
+  "td",
+  "th",
+]);
+
+export interface EditableElementDescription {
+  kind: string;
+  preview: string;
+  accessibleLabel: string;
+}
 
 function getTagName(el: Element): string {
   return el.tagName.toLowerCase();
@@ -135,6 +151,20 @@ function promoteToEditableContainer(el: HTMLElement): HTMLElement {
 }
 
 export function resolveEditableTarget(el: HTMLElement): HTMLElement {
+  let textBoundary: HTMLElement | null = el;
+  while (textBoundary && !TEXT_BOUNDARY_TAGS.has(getTagName(textBoundary))) {
+    textBoundary = textBoundary.parentElement;
+  }
+  if (textBoundary) {
+    if (isInteractive(textBoundary)) {
+      const parent = textBoundary.parentElement;
+      if (parent && countDirectInteractiveChildren(parent) >= 2) {
+        return parent as HTMLElement;
+      }
+    }
+    return textBoundary;
+  }
+
   let candidate = promoteInlineOrDecorativeTarget(el);
 
   if (MEDIA_TAGS.has(getTagName(candidate))) {
@@ -166,6 +196,67 @@ export function resolveEditableTarget(el: HTMLElement): HTMLElement {
   }
 
   return candidate;
+}
+
+export function getParentEditableTarget(el: HTMLElement): HTMLElement | null {
+  let current = el.parentElement;
+  while (current) {
+    const tag = getTagName(current);
+    if (tag === "body" || tag === "html") return null;
+    if (CONTAINER_TAGS.has(tag) || TEXT_BOUNDARY_TAGS.has(tag)) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
+function normalizeVisibleText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function clipText(value: string, maxLength = 42): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength - 1)}…`;
+}
+
+export function describeEditableElement(
+  el: HTMLElement
+): EditableElementDescription {
+  const tag = getTagName(el);
+  const rawText = normalizeVisibleText(el.textContent || "");
+  const fallbackText = normalizeVisibleText(
+    el.getAttribute("aria-label") ||
+      el.getAttribute("alt") ||
+      el.getAttribute("title") ||
+      ""
+  );
+  const preview = clipText(rawText || fallbackText || "无可见文字");
+
+  let kind = "内容";
+  if (HEADING_TAGS.has(tag)) kind = "标题";
+  else if (tag === "p") kind = "段落";
+  else if (tag === "li") kind = "列表项";
+  else if (tag === "td" || tag === "th") kind = "表格内容";
+  else if (tag === "button") kind = "按钮";
+  else if (tag === "a") kind = "链接";
+  else if (tag === "img" || tag === "picture") kind = "图片";
+  else if (CONTAINER_TAGS.has(tag)) kind = "区域";
+
+  if (
+    rawText &&
+    rawText.length <= 24 &&
+    /^[\s￥$€£¥+\-.,，%％\d万千百亿]+$/.test(rawText)
+  ) {
+    kind = "数据";
+  }
+
+  return {
+    kind,
+    preview,
+    accessibleLabel:
+      preview === "无可见文字" ? `已选择${kind}` : `已选择${kind}：${preview}`,
+  };
 }
 
 function describeNode(el: Element): string {

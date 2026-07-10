@@ -58,6 +58,10 @@ MessageType = Literal[
     "toolResult",
 ]
 from prompts.pipeline import build_prompt_messages
+from prompts.budget import PROMPT_BUDGET_CHARS
+from prompts.memory import get_design_session_memory_metrics
+from prompts.update.from_file_snapshot import compress_file_content_for_prompt
+from fs_logging.agent_trace import AgentTraceLogger
 from prompts.request_parsing import (
     parse_design_session,
     parse_prompt_content,
@@ -143,6 +147,22 @@ def _build_prompt_metrics(
 ) -> Dict[str, int]:
     prompt_chars = sum(_extract_text_length(message) for message in prompt_messages)
     history_chars = sum(len(item.get("text", "")) for item in extracted_params.history)
+    memory_metrics = get_design_session_memory_metrics(
+        extracted_params.design_session
+    )
+    file_snapshot_chars = (
+        len(extracted_params.file_state.get("content", ""))
+        if extracted_params.file_state
+        else 0
+    )
+    compressed_file_snapshot = (
+        compress_file_content_for_prompt(
+            extracted_params.file_state.get("content", ""),
+            extracted_params.prompt.get("selected_element_html"),
+        )
+        if extracted_params.file_state
+        else None
+    )
     image_asset_count = len(extracted_params.prompt.get("images", [])) + sum(
         len(item.get("images", [])) for item in extracted_params.history
     )
@@ -150,10 +170,17 @@ def _build_prompt_metrics(
         "promptChars": prompt_chars,
         "promptMessages": len(prompt_messages),
         "estimatedTokens": _estimate_prompt_tokens(prompt_chars),
-        "fileSnapshotChars": len(extracted_params.file_state.get("content", ""))
-        if extracted_params.file_state
+        "promptBudgetChars": PROMPT_BUDGET_CHARS,
+        "promptOverBudgetChars": max(0, prompt_chars - PROMPT_BUDGET_CHARS),
+        "fileSnapshotChars": file_snapshot_chars,
+        "compressedFileSnapshotChars": compressed_file_snapshot.final_chars
+        if compressed_file_snapshot
+        else 0,
+        "fileSnapshotOmittedChars": compressed_file_snapshot.omitted_chars
+        if compressed_file_snapshot
         else 0,
         "designSessionChars": _extract_text_length(extracted_params.design_session),
+        **memory_metrics,
         "historyMessageCount": len(extracted_params.history),
         "historyChars": history_chars,
         "imageAssetCount": image_asset_count,
@@ -190,6 +217,7 @@ class PipelineContext:
     completions: List[str] = field(default_factory=list)
     variant_completions: Dict[int, str] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    trace: AgentTraceLogger | None = None
 
     @property
     # 给中间件暴露统一的消息发送入口，避免层层透传 ws 对象。
@@ -666,6 +694,7 @@ class AgenticGenerationStage:
         run_id: str | None = None,
         workspace_id: str | None = None,
         revision_id: str | None = None,
+        trace: AgentTraceLogger | None = None,
     ):
         self.send_message = send_message
         self.openai_api_key = openai_api_key
@@ -687,6 +716,7 @@ class AgenticGenerationStage:
         self.run_id = run_id
         self.workspace_id = workspace_id
         self.revision_id = revision_id
+        self.trace = trace
 
     # 把后端内部策略名映射成前端更容易展示的短标签。
     def _prompt_strategy_label(self) -> str | None:
@@ -821,7 +851,19 @@ class AgenticGenerationStage:
                 asset_base_url=self.asset_base_url,
                 initial_file_state=self.file_state,
                 option_codes=self.option_codes,
+                trace=self.trace,
             )
+            if self.trace:
+                self.trace.record(
+                    "variant_start",
+                    {
+                        "variantIndex": index,
+                        "model": model.value,
+                        "promptStrategy": self._prompt_strategy_label(),
+                        "promptStrategyReason": self.prompt_strategy_reason,
+                        "promptMetrics": self.prompt_metrics,
+                    },
+                )
             completion = await runner.run(model, prompt_messages)
             if (
                 self.generation_type == "update"
@@ -857,6 +899,7 @@ class AgenticGenerationStage:
                     asset_base_url=self.asset_base_url,
                     initial_file_state=self.file_state,
                     option_codes=self.option_codes,
+                    trace=self.trace,
                 )
                 retry_completion = await retry_runner.run(model, retry_prompt_messages)
                 if retry_completion and self._is_visibly_different(
@@ -886,9 +929,21 @@ class AgenticGenerationStage:
                     "stageTimings": stage_timings,
                     "imageUpdateStatus": latest_image_update,
                     "failureStage": None,
+                    **(self.trace.metadata() if self.trace else {}),
                 },
                 None,
             )
+            if self.trace:
+                self.trace.record(
+                    "variant_complete",
+                    {
+                        "variantIndex": index,
+                        "model": model.value,
+                        "durationMs": duration_ms,
+                        "stageTimings": stage_timings,
+                        "completionChars": len(completion or ""),
+                    },
+                )
             self._emit_variant_log(
                 "generation_result",
                 index=index,
@@ -934,9 +989,20 @@ class AgenticGenerationStage:
                         ),
                     },
                     "failureStage": "model_selection",
+                    **(self.trace.metadata() if self.trace else {}),
                 },
                 None,
             )
+            if self.trace:
+                self.trace.record(
+                    "variant_error",
+                    {
+                        "variantIndex": index,
+                        "model": model.value,
+                        "failureStage": "model_selection",
+                        "error": str(e),
+                    },
+                )
             self._emit_variant_log(
                 "generation_result",
                 index=index,
@@ -975,9 +1041,20 @@ class AgenticGenerationStage:
                         ),
                     },
                     "failureStage": "model_selection",
+                    **(self.trace.metadata() if self.trace else {}),
                 },
                 None,
             )
+            if self.trace:
+                self.trace.record(
+                    "variant_error",
+                    {
+                        "variantIndex": index,
+                        "model": model.value,
+                        "failureStage": "model_selection",
+                        "error": str(e),
+                    },
+                )
             self._emit_variant_log(
                 "generation_result",
                 index=index,
@@ -1013,9 +1090,20 @@ class AgenticGenerationStage:
                         ),
                     },
                     "failureStage": "generation",
+                    **(self.trace.metadata() if self.trace else {}),
                 },
                 None,
             )
+            if self.trace:
+                self.trace.record(
+                    "variant_error",
+                    {
+                        "variantIndex": index,
+                        "model": model.value,
+                        "failureStage": "generation",
+                        "error": str(e),
+                    },
+                )
             self._emit_variant_log(
                 "generation_result",
                 index=index,
@@ -1045,9 +1133,20 @@ class AgenticGenerationStage:
                         ),
                     },
                     "failureStage": stage,
+                    **(self.trace.metadata() if self.trace else {}),
                 },
                 None,
             )
+            if self.trace:
+                self.trace.record(
+                    "variant_error",
+                    {
+                        "variantIndex": index,
+                        "model": model.value,
+                        "failureStage": stage,
+                        "error": str(e),
+                    },
+                )
             self._emit_variant_log(
                 "generation_result",
                 index=index,
@@ -1105,6 +1204,31 @@ class ParameterExtractionMiddleware(Middleware):
         context.extracted_params = await param_extractor.extract_and_validate(
             context.params
         )
+        context.trace = AgentTraceLogger(
+            run_id=context.extracted_params.run_id,
+            workspace_id=context.extracted_params.workspace_id,
+            revision_id=cast(
+                str | None, context.extracted_params.prompt.get("revision_id")
+            ),
+        )
+        if context.trace:
+            context.trace.record(
+                "request_parsed",
+                {
+                    "generationType": context.extracted_params.generation_type,
+                    "inputMode": context.extracted_params.input_mode,
+                    "stack": context.extracted_params.stack,
+                    "historyMessages": len(context.extracted_params.history),
+                    "fileStateChars": len(
+                        context.extracted_params.file_state.get("content", "")
+                    )
+                    if context.extracted_params.file_state
+                    else 0,
+                    "memoryMetrics": get_design_session_memory_metrics(
+                        context.extracted_params.design_session
+                    ),
+                },
+            )
         context.metadata["request_parse_ms"] = round(
             (time.perf_counter() - parse_started_at) * 1000
         )
@@ -1176,6 +1300,18 @@ class PromptCreationMiddleware(Middleware):
         context.metadata["prompt_duration_ms"] = round(
             (time.perf_counter() - context.metadata["prompt_started_at"]) * 1000
         )
+        if context.trace:
+            context.trace.record(
+                "prompt_built",
+                {
+                    "promptStrategy": context.metadata.get("prompt_strategy"),
+                    "promptStrategyReason": context.metadata.get(
+                        "prompt_strategy_reason"
+                    ),
+                    "promptMetrics": context.metadata.get("prompt_metrics"),
+                    "durationMs": context.metadata.get("prompt_duration_ms"),
+                },
+            )
         _emit_backend_log(
             "prompt_build",
             {
@@ -1258,6 +1394,7 @@ class CodeGenerationMiddleware(Middleware):
                 revision_id=cast(
                     str | None, context.extracted_params.prompt.get("revision_id")
                 ),
+                trace=context.trace,
             )
 
             context.variant_completions = await generation_stage.process_variants(

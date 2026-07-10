@@ -15,6 +15,12 @@ import {
   showSelectionOverlay,
 } from "../select-and-edit/overlays";
 import { resolveEditableTarget } from "../select-and-edit/utils";
+import { describeEditableElement } from "../select-and-edit/utils";
+import { SelectionEditPopover } from "../select-and-edit/SelectionEditPopover";
+import {
+  calculateSelectionPopoverPosition,
+  PopoverPosition,
+} from "../select-and-edit/positioning";
 
 interface Props {
   code: string;
@@ -22,6 +28,7 @@ interface Props {
   onScaleChange?: (scale: number) => void;
   viewMode?: "fit" | "actual";
   isGenerating?: boolean;
+  onSubmitSelectionEdit?: (instruction: string) => void | Promise<void>;
 }
 
 const MOBILE_VIEWPORT_WIDTH = 375;
@@ -33,6 +40,7 @@ function PreviewComponent({
   onScaleChange,
   viewMode,
   isGenerating = false,
+  onSubmitSelectionEdit,
 }: Props) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -49,6 +57,8 @@ function PreviewComponent({
 
   // Select and edit functionality
   const [clickEvent, setClickEvent] = useState<MouseEvent | null>(null);
+  const [popoverPosition, setPopoverPosition] =
+    useState<PopoverPosition | null>(null);
   const activeMode = viewMode ?? "fit";
 
   useEffect(() => {
@@ -91,8 +101,9 @@ function PreviewComponent({
     if (!inSelectAndEditModeRef.current) return;
     const target = event.target as HTMLElement;
     if (!target || !target.getBoundingClientRect) return;
-    hoveredElementRef.current = target;
-    showHoverOverlay(target);
+    const editableTarget = resolveEditableTarget(target);
+    hoveredElementRef.current = editableTarget;
+    showHoverOverlay(editableTarget);
   }, []);
 
   const handleIframeMouseOut = useCallback((event: MouseEvent) => {
@@ -114,8 +125,9 @@ function PreviewComponent({
     const selected = useAppStore.getState().selectedElement;
     if (selected && selected.isConnected) {
       showSelectionOverlay(selected);
+      updatePopoverPosition(selected);
     }
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Escape exits select mode even when focus is inside the iframe.
   const handleIframeKeyDown = useCallback((event: KeyboardEvent) => {
@@ -130,7 +142,26 @@ function PreviewComponent({
     inSelectAndEditMode,
     selectedElement,
     setSelectedElement,
+    updateInstruction,
+    setUpdateInstruction,
   } = useAppStore();
+
+  const updatePopoverPosition = useCallback((element: HTMLElement) => {
+    const root = wrapperRef.current?.parentElement;
+    const iframe = iframeRef.current;
+    if (!root || !iframe || !element.isConnected) return;
+    setPopoverPosition(
+      calculateSelectionPopoverPosition({
+        rootRect: root.getBoundingClientRect(),
+        iframeRect: iframe.getBoundingClientRect(),
+        elementRect: element.getBoundingClientRect(),
+        iframeLayoutWidth: iframe.offsetWidth,
+        iframeLayoutHeight: iframe.offsetHeight,
+        popoverWidth: Math.min(336, Math.max(280, root.clientWidth - 24)),
+        popoverHeight: 210,
+      })
+    );
+  }, []);
 
   const inSelectAndEditModeRef = useRef(inSelectAndEditMode);
   useEffect(() => {
@@ -155,10 +186,12 @@ function PreviewComponent({
   useEffect(() => {
     if (selectedElement && selectedElement.isConnected) {
       showSelectionOverlay(selectedElement);
+      updatePopoverPosition(selectedElement);
       return;
     }
+    setPopoverPosition(null);
     hideSelectionOverlay(iframeRef.current?.contentWindow?.document);
-  }, [selectedElement]);
+  }, [selectedElement, updatePopoverPosition]);
 
   // Apply/remove select-mode side effects (cursor, hover and selection
   // rings) when the mode toggles.
@@ -400,6 +433,21 @@ function PreviewComponent({
             </div>
           )}
         </div>
+        {inSelectAndEditMode &&
+          selectedElement &&
+          popoverPosition &&
+          onSubmitSelectionEdit && (
+            <SelectionEditPopover
+              description={describeEditableElement(selectedElement)}
+              instruction={updateInstruction}
+              isSubmitting={isGenerating}
+              position={popoverPosition}
+              onInstructionChange={setUpdateInstruction}
+              onSubmit={() => onSubmitSelectionEdit(updateInstruction)}
+              onReselect={() => setSelectedElement(null)}
+              onCancel={() => useAppStore.getState().disableInSelectAndEditMode()}
+            />
+          )}
       </div>
     );
 }

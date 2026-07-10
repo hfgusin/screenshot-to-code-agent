@@ -66,6 +66,8 @@ export type Variant = {
   metrics?: {
     durationMs?: number;
     runId?: string;
+    traceId?: string;
+    tracePath?: string;
     promptStrategy?: "history" | "file_snapshot";
     stageTimings?: AgentStageTimings;
     promptMetrics?: AgentPromptMetrics;

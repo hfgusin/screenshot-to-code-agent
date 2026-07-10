@@ -52,7 +52,90 @@ export interface DesignSession {
   intentNeedsClarification?: boolean;
   pendingQuestion?: string;
   reviewSummary?: string;
+  memory?: AgentMemory;
   lastUpdatedAt: string | null;
+}
+
+export type AgentMemorySource =
+  | "user_correction"
+  | "user_instruction"
+  | "repeated_pattern"
+  | "model_inference"
+  | "code_state"
+  | "tool_result";
+
+export type AgentMemoryStatus =
+  | "active"
+  | "tentative"
+  | "superseded"
+  | "rejected";
+
+export type AgentLongMemoryType =
+  | "business_rule"
+  | "user_preference"
+  | "design_constraint"
+  | "product_semantics";
+
+export interface AgentLongMemoryEntry {
+  id: string;
+  type: AgentLongMemoryType;
+  text: string;
+  confidence: number;
+  source: AgentMemorySource;
+  status: AgentMemoryStatus;
+  appliesTo: string[];
+  createdAt: string;
+  lastConfirmedAt?: string;
+}
+
+export interface AgentShortMemoryEntry {
+  id: string;
+  text: string;
+  source: AgentMemorySource;
+  createdAt: string;
+  expiresAfterTurns?: number;
+}
+
+export interface AgentArtifactMemory {
+  summary: string;
+  sections: string[];
+  activeAssets: string[];
+  lastUpdatedAt?: string;
+}
+
+export interface AgentFailureMemoryEntry {
+  id: string;
+  text: string;
+  toolName?: string;
+  source: AgentMemorySource;
+  createdAt: string;
+  status: "active" | "resolved";
+}
+
+export interface AgentCandidateMemoryEntry {
+  id: string;
+  text: string;
+  reason: string;
+  confidence: number;
+  source: AgentMemorySource;
+  createdAt: string;
+}
+
+export interface AgentMemoryConflict {
+  id: string;
+  longMemoryId: string;
+  text: string;
+  severity: "low" | "medium" | "high";
+  createdAt: string;
+}
+
+export interface AgentMemory {
+  shortTerm: AgentShortMemoryEntry[];
+  longTerm: AgentLongMemoryEntry[];
+  artifact: AgentArtifactMemory;
+  failures: AgentFailureMemoryEntry[];
+  candidates: AgentCandidateMemoryEntry[];
+  conflicts: AgentMemoryConflict[];
 }
 
 export type TurnIntent = "generate" | "modify" | "repair" | "question";
@@ -116,8 +199,19 @@ export interface AgentPromptMetrics {
   promptChars?: number;
   promptMessages?: number;
   estimatedTokens?: number;
+  promptBudgetChars?: number;
+  promptOverBudgetChars?: number;
   fileSnapshotChars?: number;
+  compressedFileSnapshotChars?: number;
+  fileSnapshotOmittedChars?: number;
   designSessionChars?: number;
+  memoryChars?: number;
+  memoryPromptChars?: number;
+  memoryBudgetChars?: number;
+  memoryOmittedChars?: number;
+  longMemoryCount?: number;
+  shortMemoryCount?: number;
+  memoryConflictCount?: number;
   historyMessageCount?: number;
   historyChars?: number;
   imageAssetCount?: number;
@@ -175,6 +269,11 @@ export interface PromptContent {
   workspaceId?: string;
   selectedElementHtml?: string; // Raw HTML of selected element (for display only)
   selectedElementContext?: string;
+  editReview?: {
+    beforeText: string;
+    afterText?: string;
+    source: "direct" | "ai";
+  };
   revisionId?: string;
   parentCommitHash?: string | null;
   previewSelfCheckEnabled?: boolean;

@@ -7,6 +7,7 @@ import pytest
 from agent.state import AgentFileState
 from agent.tools.runtime import AgentToolRuntime
 from agent.tools.types import ToolCall
+from preview_screenshot import PreviewDiagnostic, ScreenshotCaptureResult
 from uploaded_assets import persist_data_url_as_temporary_asset
 
 
@@ -404,12 +405,15 @@ async def test_screenshot_preview_returns_image_part(
         html: str,
         device: str = "desktop",
         full_page: bool = True,
-    ) -> bytes:
+    ) -> ScreenshotCaptureResult:
         captured.append({"html": html, "device": device, "full_page": full_page})
-        return f"{device}-png-bytes".encode("ascii")
+        return ScreenshotCaptureResult(
+            image_bytes=f"{device}-png-bytes".encode("ascii"),
+            diagnostics=[],
+        )
 
     monkeypatch.setattr(
-        "agent.tools.screenshot_preview.capture_preview_screenshot", fake_capture
+        "agent.tools.screenshot_preview.capture_preview_result", fake_capture
     )
     runtime = AgentToolRuntime(
         file_state=AgentFileState(path="index.html", content="<main>hi</main>"),
@@ -449,6 +453,8 @@ async def test_screenshot_preview_returns_image_part(
         },
     ]
     assert result.summary["status"] == "ok"
+    assert result.summary["diagnostic_count"] == 0
+    assert result.summary["diagnostics"] == []
     screenshots = cast(list[dict[str, Any]], result.summary["screenshots"])
     # Previews are inlined as data URLs for the UI, not persisted as assets.
     desktop_url = cast(str, screenshots[0]["image_url"])
@@ -476,6 +482,57 @@ async def test_screenshot_preview_returns_image_part(
 
 
 @pytest.mark.asyncio
+async def test_screenshot_preview_includes_browser_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_capture(
+        _html: str,
+        device: str = "desktop",
+        full_page: bool = True,
+    ) -> ScreenshotCaptureResult:
+        assert full_page is True
+        return ScreenshotCaptureResult(
+            image_bytes=f"{device}-png-bytes".encode("ascii"),
+            diagnostics=[
+                PreviewDiagnostic(
+                    type="page_error",
+                    message="ReferenceError: React is not defined",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(
+        "agent.tools.screenshot_preview.capture_preview_result", fake_capture
+    )
+    runtime = AgentToolRuntime(
+        file_state=AgentFileState(path="index.html", content="<main>hi</main>"),
+        should_generate_images=False,
+        openai_api_key=None,
+        openai_base_url=None,
+    )
+
+    result = await runtime.execute(
+        ToolCall(id="call-1", name="screenshot_preview", arguments={})
+    )
+
+    assert result.ok is True
+    assert result.summary["diagnostic_count"] == 2
+    assert result.summary["diagnostics"] == [
+        {
+            "type": "page_error",
+            "message": "ReferenceError: React is not defined",
+            "viewport": "desktop",
+        },
+        {
+            "type": "page_error",
+            "message": "ReferenceError: React is not defined",
+            "viewport": "mobile",
+        },
+    ]
+    assert result.result["details"]["diagnostics"] == result.summary["diagnostics"]
+
+
+@pytest.mark.asyncio
 async def test_screenshot_preview_reports_capture_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -483,11 +540,11 @@ async def test_screenshot_preview_reports_capture_failure(
         html: str,
         device: str = "desktop",
         full_page: bool = True,
-    ) -> bytes:
+    ) -> ScreenshotCaptureResult:
         raise Exception("boom")
 
     monkeypatch.setattr(
-        "agent.tools.screenshot_preview.capture_preview_screenshot", failing_capture
+        "agent.tools.screenshot_preview.capture_preview_result", failing_capture
     )
     runtime = AgentToolRuntime(
         file_state=AgentFileState(path="index.html", content="<main>hi</main>"),

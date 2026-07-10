@@ -68,6 +68,46 @@ async def test_extracts_turn_intent_and_design_session_fields() -> None:
                 "lastIntent": "modify",
                 "pendingQuestion": "Which section should change?",
                 "reviewSummary": "intent=modify; preview=pass",
+                "memory": {
+                    "longTerm": [
+                        {
+                            "id": "rule-1",
+                            "type": "business_rule",
+                            "text": "特殊分享页不展示分享按钮",
+                            "confidence": 0.95,
+                            "source": "user_correction",
+                            "status": "active",
+                            "appliesTo": ["special_share_scene"],
+                            "createdAt": "2026-07-10T00:00:00",
+                            "lastConfirmedAt": "2026-07-10T00:00:00",
+                        }
+                    ],
+                    "shortTerm": [
+                        {
+                            "id": "short-1",
+                            "text": "最近一轮在调整评论区语义",
+                            "source": "user_instruction",
+                            "createdAt": "2026-07-10T00:00:00",
+                            "expiresAfterTurns": 6,
+                        }
+                    ],
+                    "artifact": {
+                        "summary": "分享页; sections=4; buttons=2; images=1",
+                        "sections": ["header", "main"],
+                        "activeAssets": ["https://example.com/a.png"],
+                    },
+                    "failures": [],
+                    "candidates": [],
+                    "conflicts": [
+                        {
+                            "id": "conflict-1",
+                            "longMemoryId": "rule-1",
+                            "text": "本轮请求可能和长期记忆冲突",
+                            "severity": "high",
+                            "createdAt": "2026-07-10T00:00:00",
+                        }
+                    ],
+                },
             },
             "prompt": {
                 "text": "Fix the layout",
@@ -88,3 +128,8 @@ async def test_extracts_turn_intent_and_design_session_fields() -> None:
     assert extracted.design_session["last_intent"] == "modify"
     assert extracted.design_session["pending_question"] == "Which section should change?"
     assert extracted.design_session["review_summary"] == "intent=modify; preview=pass"
+    memory = extracted.design_session["memory"]
+    assert memory["long_term"][0]["text"] == "特殊分享页不展示分享按钮"
+    assert memory["short_term"][0]["text"] == "最近一轮在调整评论区语义"
+    assert memory["artifact"]["active_assets"] == ["https://example.com/a.png"]
+    assert memory["conflicts"][0]["long_memory_id"] == "rule-1"

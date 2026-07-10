@@ -6,6 +6,7 @@ from prompts.design_session import (
 from prompts.prompt_types import DesignSession, IntentDecision, Stack
 from prompts import system_prompt
 from prompts.design_system import build_design_system_prompt_block
+from prompts.memory import build_agent_memory_prompt_block
 from prompts.policies import build_selected_stack_policy, build_user_image_policy
 
 
@@ -26,6 +27,7 @@ def build_video_prompt_messages(
     design_session_block = build_design_session_prompt_block(
         design_session, workspace_id=workspace_id
     )
+    memory_block = build_agent_memory_prompt_block(design_session)
     revision_metadata_block = build_revision_metadata_block(
         workspace_id=workspace_id,
         turn_intent=turn_intent,
@@ -51,6 +53,7 @@ def build_video_prompt_messages(
     {selected_stack}
     {design_system_block}
     {design_session_block}
+    {memory_block}
     {revision_metadata_block}
     """
     if text_prompt.strip():

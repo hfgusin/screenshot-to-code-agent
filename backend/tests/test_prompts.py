@@ -188,6 +188,46 @@ class TestCreatePrompt:
                 "intent_reason": "Create mode defaults to a fresh draft.",
                 "intent_signals": ["create"],
                 "review_summary": "intent=generate; preview=pass",
+                "memory": {
+                    "long_term": [
+                        {
+                            "id": "rule-1",
+                            "type": "business_rule",
+                            "text": "特殊分享页不展示分享按钮",
+                            "confidence": 0.95,
+                            "source": "user_correction",
+                            "status": "active",
+                            "applies_to": ["special_share_scene"],
+                            "created_at": "2026-07-10T00:00:00",
+                            "last_confirmed_at": "2026-07-10T00:00:00",
+                        }
+                    ],
+                    "short_term": [
+                        {
+                            "id": "short-1",
+                            "text": "最近在修正评论区语义",
+                            "source": "user_instruction",
+                            "created_at": "2026-07-10T00:00:00",
+                            "expires_after_turns": 6,
+                        }
+                    ],
+                    "artifact": {
+                        "summary": "分享页; sections=4",
+                        "sections": ["header", "main"],
+                        "active_assets": [],
+                    },
+                    "failures": [],
+                    "candidates": [],
+                    "conflicts": [
+                        {
+                            "id": "conflict-1",
+                            "long_memory_id": "rule-1",
+                            "text": "本轮请求可能和长期记忆冲突",
+                            "severity": "high",
+                            "created_at": "2026-07-10T00:00:00",
+                        }
+                    ],
+                },
             },
             image_generation_enabled=True,
         )
@@ -206,6 +246,115 @@ class TestCreatePrompt:
         assert "Turn intent: modify" in user_content
         assert "Intent confidence: 0.90" in user_content
         assert "Treat desktop and mobile as first-class viewports" in user_content
+        assert "## Agent memory" in user_content
+        assert "特殊分享页不展示分享按钮" in user_content
+        assert "最近在修正评论区语义" in user_content
+        assert "Active semantic conflicts" in user_content
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_applies_memory_budget(
+        self,
+    ) -> None:
+        long_memory = [
+            {
+                "id": f"rule-{index}",
+                "type": "business_rule",
+                "text": f"规则 {index}: " + ("特殊分享页不要展示分享按钮。" * 80),
+                "confidence": 0.9,
+                "source": "user_instruction",
+                "status": "active",
+                "applies_to": ["special_share_scene"],
+                "created_at": "2026-07-10T00:00:00",
+                "last_confirmed_at": "2026-07-10T00:00:00",
+            }
+            for index in range(20)
+        ]
+
+        messages = await build_prompt_messages(
+            stack="html_css",
+            input_mode="text",
+            generation_type="update",
+            prompt={"text": "继续精修", "images": [], "videos": []},
+            history=[
+                {
+                    "role": "user",
+                    "text": "Create a page",
+                    "images": [],
+                    "videos": [],
+                },
+                {
+                    "role": "assistant",
+                    "text": "<html>Initial code</html>",
+                    "images": [],
+                    "videos": [],
+                },
+            ],
+            design_session={
+                "goal": "Create a polished share page",
+                "memory": {
+                    "long_term": long_memory,
+                    "short_term": [],
+                    "artifact": {},
+                    "failures": [],
+                    "candidates": [],
+                    "conflicts": [],
+                },
+            },
+            image_generation_enabled=True,
+        )
+
+        user_text = "\n".join(
+            str(msg.get("content", ""))
+            for msg in messages
+            if msg.get("role") == "user"
+        )
+        assert "## Agent memory" in user_text
+        assert "Memory budget applied" in user_text
+        assert "omitted" in user_text
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_trims_large_history_message(
+        self,
+    ) -> None:
+        messages = await build_prompt_messages(
+            stack="html_css",
+            input_mode="text",
+            generation_type="update",
+            prompt={"text": "继续调整", "images": [], "videos": []},
+            history=[
+                {
+                    "role": "user",
+                    "text": "Create a page",
+                    "images": [],
+                    "videos": [],
+                },
+                {
+                    "role": "assistant",
+                    "text": "<html>" + ("x" * 20000) + "</html>",
+                    "images": [],
+                    "videos": [],
+                },
+                {
+                    "role": "user",
+                    "text": "继续调整",
+                    "images": [],
+                    "videos": [],
+                },
+            ],
+            image_generation_enabled=True,
+        )
+
+        system_text = "\n".join(
+            str(msg.get("content", ""))
+            for msg in messages
+            if msg.get("role") == "system"
+        )
+        all_text = "\n".join(
+            str(msg.get("content", ""))
+            for msg in messages
+        )
+        assert "History text was trimmed for prompt budget" in system_text
+        assert "history message omitted for prompt budget" in all_text
 
     @pytest.mark.asyncio
     async def test_update_prompt_highlights_image_assets_from_history(

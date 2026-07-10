@@ -1,6 +1,16 @@
-from typing import List, cast
+from typing import List, Literal, cast
 
 from prompts.prompt_types import (
+    AgentArtifactMemory,
+    AgentCandidateMemoryEntry,
+    AgentFailureMemoryEntry,
+    AgentLongMemoryType,
+    AgentLongMemoryEntry,
+    AgentMemory,
+    AgentMemoryConflict,
+    AgentMemorySource,
+    AgentMemoryStatus,
+    AgentShortMemoryEntry,
     DesignSession,
     DesignUpdateIntent,
     IntentDecision,
@@ -15,6 +25,190 @@ def _to_string_list(value: object) -> List[str]:
         return []
     raw_list = cast(List[object], value)
     return [item for item in raw_list if isinstance(item, str)]
+
+
+def _to_object_list(value: object) -> List[object]:
+    return cast(List[object], value) if isinstance(value, list) else []
+
+
+def _to_float(value: object, default: float = 0) -> float:
+    return float(value) if isinstance(value, (int, float)) else default
+
+
+def _to_int(value: object, default: int = 0) -> int:
+    return int(value) if isinstance(value, (int, float)) else default
+
+
+def _get_str(raw: dict[str, object], key: str, default: str = "") -> str:
+    value = raw.get(key)
+    return value.strip() if isinstance(value, str) else default
+
+
+def _parse_long_memory_item(raw_item: object) -> AgentLongMemoryEntry | None:
+    if not isinstance(raw_item, dict):
+        return None
+    item = cast(dict[str, object], raw_item)
+    text = _get_str(item, "text")
+    if not text:
+        return None
+    created_at = _get_str(item, "createdAt") or _get_str(item, "created_at")
+    last_confirmed_at = _get_str(item, "lastConfirmedAt") or _get_str(
+        item, "last_confirmed_at"
+    )
+    return {
+        "id": _get_str(item, "id", "long-memory"),
+        "type": cast(AgentLongMemoryType, _get_str(item, "type", "design_constraint")),
+        "text": text,
+        "confidence": _to_float(item.get("confidence"), 0),
+        "source": cast(AgentMemorySource, _get_str(item, "source", "model_inference")),
+        "status": cast(AgentMemoryStatus, _get_str(item, "status", "tentative")),
+        "applies_to": _to_string_list(item.get("appliesTo"))
+        or _to_string_list(item.get("applies_to")),
+        "created_at": created_at,
+        "last_confirmed_at": last_confirmed_at,
+    }
+
+
+def _parse_short_memory_item(raw_item: object) -> AgentShortMemoryEntry | None:
+    if not isinstance(raw_item, dict):
+        return None
+    item = cast(dict[str, object], raw_item)
+    text = _get_str(item, "text")
+    if not text:
+        return None
+    return {
+        "id": _get_str(item, "id", "short-memory"),
+        "text": text,
+        "source": cast(AgentMemorySource, _get_str(item, "source", "user_instruction")),
+        "created_at": _get_str(item, "createdAt") or _get_str(item, "created_at"),
+        "expires_after_turns": _to_int(
+            item.get("expiresAfterTurns") or item.get("expires_after_turns"), 0
+        ),
+    }
+
+
+def _parse_failure_memory_item(raw_item: object) -> AgentFailureMemoryEntry | None:
+    if not isinstance(raw_item, dict):
+        return None
+    item = cast(dict[str, object], raw_item)
+    text = _get_str(item, "text")
+    if not text:
+        return None
+    return {
+        "id": _get_str(item, "id", "failure-memory"),
+        "text": text,
+        "tool_name": _get_str(item, "toolName") or _get_str(item, "tool_name"),
+        "source": cast(AgentMemorySource, _get_str(item, "source", "tool_result")),
+        "created_at": _get_str(item, "createdAt") or _get_str(item, "created_at"),
+        "status": cast(Literal["active", "resolved"], _get_str(item, "status", "active")),
+    }
+
+
+def _parse_candidate_memory_item(raw_item: object) -> AgentCandidateMemoryEntry | None:
+    if not isinstance(raw_item, dict):
+        return None
+    item = cast(dict[str, object], raw_item)
+    text = _get_str(item, "text")
+    if not text:
+        return None
+    return {
+        "id": _get_str(item, "id", "candidate-memory"),
+        "text": text,
+        "reason": _get_str(item, "reason"),
+        "confidence": _to_float(item.get("confidence"), 0),
+        "source": cast(AgentMemorySource, _get_str(item, "source", "model_inference")),
+        "created_at": _get_str(item, "createdAt") or _get_str(item, "created_at"),
+    }
+
+
+def _parse_memory_conflict(raw_item: object) -> AgentMemoryConflict | None:
+    if not isinstance(raw_item, dict):
+        return None
+    item = cast(dict[str, object], raw_item)
+    text = _get_str(item, "text")
+    if not text:
+        return None
+    return {
+        "id": _get_str(item, "id", "memory-conflict"),
+        "long_memory_id": _get_str(item, "longMemoryId")
+        or _get_str(item, "long_memory_id"),
+        "text": text,
+        "severity": cast(Literal["low", "medium", "high"], _get_str(item, "severity", "medium")),
+        "created_at": _get_str(item, "createdAt") or _get_str(item, "created_at"),
+    }
+
+
+def _parse_artifact_memory(raw_artifact: object) -> AgentArtifactMemory:
+    if not isinstance(raw_artifact, dict):
+        return {}
+    artifact = cast(dict[str, object], raw_artifact)
+    parsed: AgentArtifactMemory = {
+        "summary": _get_str(artifact, "summary"),
+        "sections": _to_string_list(artifact.get("sections")),
+        "active_assets": _to_string_list(artifact.get("activeAssets"))
+        or _to_string_list(artifact.get("active_assets")),
+    }
+    last_updated_at = _get_str(artifact, "lastUpdatedAt") or _get_str(
+        artifact, "last_updated_at"
+    )
+    if last_updated_at:
+        parsed["last_updated_at"] = last_updated_at
+    return parsed
+
+
+def parse_agent_memory(raw_memory: object) -> AgentMemory | None:
+    if not isinstance(raw_memory, dict):
+        return None
+    memory = cast(dict[str, object], raw_memory)
+
+    long_term = [
+        item
+        for item in (
+            _parse_long_memory_item(raw_item)
+            for raw_item in _to_object_list(memory.get("longTerm") or memory.get("long_term"))
+        )
+        if item is not None
+    ]
+    short_term = [
+        item
+        for item in (
+            _parse_short_memory_item(raw_item)
+            for raw_item in _to_object_list(memory.get("shortTerm") or memory.get("short_term"))
+        )
+        if item is not None
+    ]
+    failures = [
+        item
+        for item in (
+            _parse_failure_memory_item(raw_item)
+            for raw_item in _to_object_list(memory.get("failures"))
+        )
+        if item is not None
+    ]
+    candidates = [
+        item
+        for item in (
+            _parse_candidate_memory_item(raw_item)
+            for raw_item in _to_object_list(memory.get("candidates"))
+        )
+        if item is not None
+    ]
+    conflicts = [
+        item
+        for item in (
+            _parse_memory_conflict(raw_item)
+            for raw_item in _to_object_list(memory.get("conflicts"))
+        )
+        if item is not None
+    ]
+    return {
+        "short_term": short_term,
+        "long_term": long_term,
+        "artifact": _parse_artifact_memory(memory.get("artifact")),
+        "failures": failures,
+        "candidates": candidates,
+        "conflicts": conflicts,
+    }
 
 
 def parse_prompt_content(raw_prompt: object) -> UserTurnInput:
@@ -221,5 +415,9 @@ def parse_design_session(raw_session: object) -> DesignSession:
         ]
         if normalized:
             parsed["revision_log"] = normalized
+
+    memory = parse_agent_memory(session_dict.get("memory"))
+    if memory:
+        parsed["memory"] = memory
 
     return parsed

@@ -1,7 +1,7 @@
 import base64
 from typing import Any, Dict
 
-from preview_screenshot import capture_preview_screenshot
+from preview_screenshot import capture_preview_result
 
 from agent.state import AgentFileState
 from agent.tools.types import ToolExecutionResult, ToolMultimodalPart
@@ -30,14 +30,23 @@ async def run_screenshot_preview(
         )
 
     screenshots: list[Dict[str, Any]] = []
+    diagnostics: list[Dict[str, Any]] = []
     multimodal_parts: list[ToolMultimodalPart] = []
     try:
         for viewport in PREVIEW_VIEWPORTS:
-            image_bytes = await capture_preview_screenshot(
+            capture = await capture_preview_result(
                 file_state.content,
                 device=viewport,
                 full_page=True,
             )
+            image_bytes = capture.image_bytes
+            for diagnostic in capture.diagnostics:
+                diagnostics.append(
+                    {
+                        **diagnostic.to_dict(),
+                        "viewport": viewport,
+                    }
+                )
             display_name = f"preview_{viewport}.png"
             image_part_index = len(multimodal_parts)
             encoded_image = base64.b64encode(image_bytes).decode("ascii")
@@ -85,10 +94,13 @@ async def run_screenshot_preview(
                 }
                 for screenshot in screenshots
             ],
+            "diagnostics": diagnostics,
         },
     }
     summary: Dict[str, Any] = {
         "screenshots": screenshots,
+        "diagnostics": diagnostics,
+        "diagnostic_count": len(diagnostics),
         "status": "ok",
     }
     return ToolExecutionResult(

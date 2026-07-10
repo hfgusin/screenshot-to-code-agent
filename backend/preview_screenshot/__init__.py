@@ -10,9 +10,11 @@ internal module layout is an implementation detail.
 """
 
 from preview_screenshot.base import ScreenshotBackend, VIEWPORT_SIZES
+from preview_screenshot.base import PreviewDiagnostic, ScreenshotCaptureResult
 from preview_screenshot.playwright_backend import PlaywrightBackend
 from preview_screenshot.registry import (
     capture_preview_screenshot,
+    capture_preview_result,
     is_screenshot_preview_available,
     probe_screenshot_preview,
     set_screenshot_backend,
@@ -20,9 +22,12 @@ from preview_screenshot.registry import (
 
 __all__ = [
     "ScreenshotBackend",
+    "PreviewDiagnostic",
+    "ScreenshotCaptureResult",
     "VIEWPORT_SIZES",
     "PlaywrightBackend",
     "capture_preview_screenshot",
+    "capture_preview_result",
     "is_screenshot_preview_available",
     "probe_screenshot_preview",
     "set_screenshot_backend",

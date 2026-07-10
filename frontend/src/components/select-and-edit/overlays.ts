@@ -5,9 +5,10 @@
 // outside <body>, which also keeps body-level selections clean.
 //
 // Two overlay kinds with deliberately distinct looks:
-// - "hover": light ring + soft fill + tag chip — what you're pointing at
-// - "selection": solid offset ring + stronger fill + "✓ tag" chip — what
+// - "hover": light ring + soft fill + content chip — what you're pointing at
+// - "selection": solid offset ring + stronger fill + "✓ content" chip — what
 //   is locked in for the edit
+import { describeEditableElement } from "./utils";
 const CURSOR_STYLE_ID = "__s2c-select-cursor";
 
 type OverlayKind = "hover" | "selection";
@@ -72,7 +73,7 @@ function ensureOverlay(doc: Document, kind: OverlayKind): HTMLElement {
     left: "-2px",
     padding: "2px 7px",
     color: "#fff",
-    font: "600 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace",
+    font: "600 12px/1.4 ui-sans-serif, system-ui, sans-serif",
     borderRadius: "4px",
     whiteSpace: "nowrap",
     boxShadow: "0 1px 4px rgba(0, 0, 0, 0.25)",
@@ -107,8 +108,9 @@ function showOverlay(element: HTMLElement, kind: OverlayKind) {
 
   const label = overlay.firstChild as HTMLElement | null;
   if (label) {
-    const tag = `<${element.tagName.toLowerCase()}>`;
-    label.textContent = kind === "selection" ? `✓ ${tag}` : tag;
+    const description = describeEditableElement(element);
+    label.textContent =
+      kind === "selection" ? `✓ 已选择${description.kind}` : description.kind;
     // Flip the label inside the box when the element touches the top edge.
     label.style.top = rect.top - inset > 26 ? "-24px" : "3px";
   }

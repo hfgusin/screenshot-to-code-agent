@@ -1,6 +1,8 @@
 import {
   buildSelectedElementInstruction,
+  describeEditableElement,
   describeElementContext,
+  getParentEditableTarget,
   resolveEditableTarget,
 } from "./utils";
 
@@ -160,7 +162,7 @@ describe("resolveEditableTarget", () => {
     );
   });
 
-  it("promotes inline text to a richer card container", () => {
+  it("keeps a paragraph as the precise text boundary", () => {
     const card = fakeElement("div", "album-card");
     const title = fakeElement("h3", "title", "<h3>Eclipse</h3>");
     title.textContent = "Eclipse";
@@ -172,6 +174,58 @@ describe("resolveEditableTarget", () => {
 
     expect(
       resolveEditableTarget(asElement(subtitle) as unknown as HTMLElement)
+    ).toBe(subtitle as unknown as HTMLElement);
+  });
+
+  it("promotes an inline span to its paragraph", () => {
+    const paragraph = fakeElement("p", "summary", "<p><span>Done</span></p>");
+    const span = fakeElement("span", "highlight", "<span>Done</span>");
+    span.textContent = "Done";
+    appendChild(paragraph, span);
+
+    expect(resolveEditableTarget(asElement(span) as unknown as HTMLElement)).toBe(
+      paragraph as unknown as HTMLElement
+    );
+  });
+});
+
+describe("describeEditableElement", () => {
+  it("describes headings without exposing HTML tags", () => {
+    const heading = fakeElement("h2", "title", "<h2>项目进展</h2>");
+    heading.textContent = "项目进展";
+    const description = describeEditableElement(
+      asElement(heading) as unknown as HTMLElement
+    );
+    expect(description.kind).toBe("标题");
+    expect(description.preview).toBe("项目进展");
+    expect(description.accessibleLabel).not.toContain("h2");
+  });
+
+  it("recognizes short numeric content as data", () => {
+    const cell = fakeElement("td", "metric", "<td>18%</td>");
+    cell.textContent = "18%";
+    expect(
+      describeEditableElement(asElement(cell) as unknown as HTMLElement).kind
+    ).toBe("数据");
+  });
+
+  it("clips long visible text", () => {
+    const paragraph = fakeElement("p", "", "<p>long</p>");
+    paragraph.textContent = "这是一个很长的周报段落，用于确认界面只展示摘要而不是把全部内容都放进选区提示中，避免提示区域过长。";
+    expect(
+      describeEditableElement(asElement(paragraph) as unknown as HTMLElement)
+        .preview
+    ).toMatch(/…$/);
+  });
+});
+
+describe("getParentEditableTarget", () => {
+  it("returns a containing card so the user can expand the scope", () => {
+    const card = fakeElement("section", "report-card");
+    const paragraph = fakeElement("p", "summary");
+    appendChild(card, paragraph);
+    expect(
+      getParentEditableTarget(asElement(paragraph) as unknown as HTMLElement)
     ).toBe(card as unknown as HTMLElement);
   });
 });

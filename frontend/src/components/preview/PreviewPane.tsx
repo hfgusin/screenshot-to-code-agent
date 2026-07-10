@@ -10,8 +10,11 @@ import {
   LuExternalLink,
   LuRefreshCw,
   LuDownload,
+  LuCheck,
+  LuRotateCcw,
+  LuTrash2,
 } from "react-icons/lu";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppState, Settings } from "../../types";
 import CodeTab from "./CodeTab";
 import { Button } from "../ui/button";
@@ -35,14 +38,26 @@ function openInNewTab(code: string) {
 interface Props {
   settings: Settings;
   onOpenVersions: () => void;
+  onSubmitSelectionEdit: (instruction: string) => void | Promise<void>;
+  onApplyPendingEdit: () => void;
+  onRegeneratePendingEdit: () => void;
+  onDiscardPendingEdit: () => void;
 }
 
-function PreviewPane({ settings, onOpenVersions }: Props) {
+function PreviewPane({
+  settings,
+  onOpenVersions,
+  onSubmitSelectionEdit,
+  onApplyPendingEdit,
+  onRegeneratePendingEdit,
+  onDiscardPendingEdit,
+}: Props) {
   const { appState } = useAppStore();
   const { head, draftHead, commits, setHead } = useProjectStore();
   const [activeTab, setActiveTab] = useState("desktop");
   const [desktopScale, setDesktopScale] = useState(1);
   const [desktopViewMode, setDesktopViewMode] = useState<"fit" | "actual">("fit");
+  const [reviewPreview, setReviewPreview] = useState<"before" | "after">("after");
 
   // Sorted commit list for version navigation
   const sortedCommits = useMemo(() =>
@@ -50,7 +65,22 @@ function PreviewPane({ settings, onOpenVersions }: Props) {
       (a, b) => new Date(a.dateCreated).getTime() - new Date(b.dateCreated).getTime()
     ), [commits]);
 
-  const activeCommitHash = draftHead ?? head;
+  const draftCommit = draftHead ? commits[draftHead] : null;
+  const draftVariant = draftCommit
+    ? draftCommit.variants[draftCommit.selectedVariantIndex]
+    : null;
+  const pendingEditReview =
+    draftCommit?.type === "ai_edit" &&
+    !!draftCommit.inputs.editReview &&
+    draftVariant?.status === "complete"
+      ? draftCommit.inputs.editReview
+      : null;
+  const activeCommitHash =
+    pendingEditReview && reviewPreview === "before" ? head : draftHead ?? head;
+
+  useEffect(() => {
+    setReviewPreview("after");
+  }, [draftHead]);
   const currentVersionIndex = sortedCommits.findIndex(c => c.hash === activeCommitHash);
   const totalVersions = sortedCommits.length;
   const canGoPrev = currentVersionIndex > 0;
@@ -71,7 +101,8 @@ function PreviewPane({ settings, onOpenVersions }: Props) {
   const previewCode = extractHtml(currentCode);
 
   const canSelectAndEdit =
-    appState === AppState.CODE_READY || !!isSelectedVariantComplete;
+    !pendingEditReview &&
+    (appState === AppState.CODE_READY || !!isSelectedVariantComplete);
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -219,6 +250,77 @@ function PreviewPane({ settings, onOpenVersions }: Props) {
             </Button>
           </div>
         </div>
+        {pendingEditReview && (
+          <div className="shrink-0 border-b border-violet-200 bg-violet-50/95 px-4 py-3 dark:border-violet-800 dark:bg-violet-950/30">
+            <div className="mx-auto flex max-w-5xl flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-violet-800 dark:text-violet-200">
+                    修改草稿待确认
+                  </span>
+                  <div className="inline-flex rounded-lg bg-white p-0.5 shadow-sm dark:bg-zinc-900">
+                    <button
+                      type="button"
+                      onClick={() => setReviewPreview("before")}
+                      className={`rounded-md px-2.5 py-1 text-xs font-medium ${
+                        reviewPreview === "before"
+                          ? "bg-violet-600 text-white"
+                          : "text-gray-500 hover:text-violet-700 dark:text-zinc-400"
+                      }`}
+                    >
+                      修改前
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReviewPreview("after")}
+                      className={`rounded-md px-2.5 py-1 text-xs font-medium ${
+                        reviewPreview === "after"
+                          ? "bg-violet-600 text-white"
+                          : "text-gray-500 hover:text-violet-700 dark:text-zinc-400"
+                      }`}
+                    >
+                      修改后
+                    </button>
+                  </div>
+                </div>
+                <p className="mt-1 truncate text-xs text-violet-700/80 dark:text-violet-300/80">
+                  {pendingEditReview.beforeText}
+                  {pendingEditReview.afterText
+                    ? ` → ${pendingEditReview.afterText}`
+                    : " → AI 已生成新结果，请切换预览检查"}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onDiscardPendingEdit}
+                  className="gap-1.5"
+                >
+                  <LuTrash2 className="h-3.5 w-3.5" />
+                  放弃
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onRegeneratePendingEdit}
+                  className="gap-1.5"
+                >
+                  <LuRotateCcw className="h-3.5 w-3.5" />
+                  重新生成
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={onApplyPendingEdit}
+                  className="gap-1.5 bg-violet-600 text-white hover:bg-violet-700"
+                >
+                  <LuCheck className="h-3.5 w-3.5" />
+                  应用修改
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
         <TabsContent value="desktop" className="flex-1 min-h-0 mt-0 data-[state=active]:flex data-[state=active]:flex-col">
           <PreviewComponent
             code={previewCode}
@@ -226,6 +328,7 @@ function PreviewPane({ settings, onOpenVersions }: Props) {
             onScaleChange={setDesktopScale}
             viewMode={desktopViewMode}
             isGenerating={appState === AppState.CODING}
+            onSubmitSelectionEdit={onSubmitSelectionEdit}
           />
         </TabsContent>
         <TabsContent value="mobile" className="flex-1 min-h-0 mt-0 data-[state=active]:flex data-[state=active]:flex-col">
@@ -234,6 +337,7 @@ function PreviewPane({ settings, onOpenVersions }: Props) {
             device="mobile"
             viewMode="actual"
             isGenerating={appState === AppState.CODING}
+            onSubmitSelectionEdit={onSubmitSelectionEdit}
           />
         </TabsContent>
         <TabsContent value="code" className="flex-1 min-h-0 mt-0 overflow-auto">

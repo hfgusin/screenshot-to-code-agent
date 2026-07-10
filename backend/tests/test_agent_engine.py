@@ -79,6 +79,70 @@ class _RepeatedEditFailureSession:
         return None
 
 
+class _RepeatedToolCallSession:
+    def __init__(self) -> None:
+        self.turn_count = 0
+
+    async def stream_turn(
+        self,
+        _on_event: Callable[[Any], Awaitable[None]],
+    ) -> ProviderTurn:
+        self.turn_count += 1
+        return ProviderTurn(
+            assistant_text="",
+            tool_calls=[
+                ToolCall(
+                    id=f"call-{self.turn_count}",
+                    name="screenshot_preview",
+                    arguments={"path": "index.html"},
+                )
+            ],
+            assistant_turn=None,
+        )
+
+    async def append_tool_results(
+        self,
+        _turn: ProviderTurn,
+        _executed_tool_calls: list[Any],
+    ) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
+class _NoProgressToolCallSession:
+    def __init__(self) -> None:
+        self.turn_count = 0
+
+    async def stream_turn(
+        self,
+        _on_event: Callable[[Any], Awaitable[None]],
+    ) -> ProviderTurn:
+        self.turn_count += 1
+        return ProviderTurn(
+            assistant_text="",
+            tool_calls=[
+                ToolCall(
+                    id=f"call-{self.turn_count}",
+                    name="screenshot_preview",
+                    arguments={"path": f"index-{self.turn_count}.html"},
+                )
+            ],
+            assistant_turn=None,
+        )
+
+    async def append_tool_results(
+        self,
+        _turn: ProviderTurn,
+        _executed_tool_calls: list[Any],
+    ) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
 @pytest.mark.asyncio
 async def test_agent_engine_runs_preview_self_check_after_file_change(
     monkeypatch: pytest.MonkeyPatch,
@@ -189,3 +253,97 @@ async def test_agent_engine_stops_repeated_old_text_failures(
         )
 
     assert fake_session.turn_count == 3
+
+
+@pytest.mark.asyncio
+async def test_agent_engine_stops_repeated_identical_tool_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_session = _RepeatedToolCallSession()
+
+    def fake_create_provider_session(**_kwargs: Any) -> _RepeatedToolCallSession:
+        return fake_session
+
+    async def fake_execute(self: Any, tool_call: ToolCall) -> ToolExecutionResult:
+        return ToolExecutionResult(
+            ok=True,
+            result={"status": "ok"},
+            summary={"status": "ok"},
+        )
+
+    monkeypatch.setattr("agent.engine.create_provider_session", fake_create_provider_session)
+    monkeypatch.setattr("agent.engine.AgentToolRuntime.execute", fake_execute)
+
+    async def send_message(
+        _msg_type: str,
+        _value: str | None,
+        _variant_index: int,
+        _data: Dict[str, Any] | None,
+        _event_id: str | None,
+    ) -> None:
+        return None
+
+    engine = AgentEngine(
+        send_message=send_message,
+        variant_index=0,
+        openai_api_key="key",
+        openai_base_url=None,
+        anthropic_api_key=None,
+        gemini_api_key=None,
+        should_generate_images=False,
+    )
+
+    with pytest.raises(Exception, match="repeated the same tool call"):
+        await engine.run(
+            Llm.DOUBAO_SEED_2_0_MINI_260428,
+            [{"role": "user", "content": "Build a page."}],
+        )
+
+    assert fake_session.turn_count == 3
+
+
+@pytest.mark.asyncio
+async def test_agent_engine_stops_no_progress_tool_turns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_session = _NoProgressToolCallSession()
+
+    def fake_create_provider_session(**_kwargs: Any) -> _NoProgressToolCallSession:
+        return fake_session
+
+    async def fake_execute(self: Any, tool_call: ToolCall) -> ToolExecutionResult:
+        return ToolExecutionResult(
+            ok=True,
+            result={},
+            summary={"status": "ok"},
+        )
+
+    monkeypatch.setattr("agent.engine.create_provider_session", fake_create_provider_session)
+    monkeypatch.setattr("agent.engine.AgentToolRuntime.execute", fake_execute)
+
+    async def send_message(
+        _msg_type: str,
+        _value: str | None,
+        _variant_index: int,
+        _data: Dict[str, Any] | None,
+        _event_id: str | None,
+    ) -> None:
+        return None
+
+    engine = AgentEngine(
+        send_message=send_message,
+        variant_index=0,
+        openai_api_key="key",
+        openai_base_url=None,
+        anthropic_api_key=None,
+        gemini_api_key=None,
+        should_generate_images=False,
+    )
+
+    with pytest.raises(Exception, match="no durable progress"):
+        await engine.run(
+            Llm.DOUBAO_SEED_2_0_MINI_260428,
+            [{"role": "user", "content": "Build a page."}],
+        )
+
+    assert fake_session.turn_count == 5

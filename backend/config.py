@@ -36,6 +36,9 @@ DEBUG_DIR = os.environ.get("DEBUG_DIR", "")
 PROMPT_REPORTS_ENABLED = os.environ.get(
     "PROMPT_REPORTS_ENABLED", ""
 ).strip().lower() in {"1", "true", "yes", "on"}
+AGENT_TRACE_ENABLED = os.environ.get(
+    "AGENT_TRACE_ENABLED", ""
+).strip().lower() in {"1", "true", "yes", "on"}
 LOCAL_ASSET_DIR = os.environ.get(
     "LOCAL_ASSET_DIR", os.path.join(os.path.dirname(__file__), "local_assets")
 )

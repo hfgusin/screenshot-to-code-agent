@@ -333,6 +333,38 @@ function AgentDebugPanel({
     promptMetrics?.estimatedTokens
       ? `约 ${promptMetrics.estimatedTokens} token`
       : null,
+    promptMetrics?.promptBudgetChars
+      ? `预算 ${promptMetrics.promptBudgetChars} 字符`
+      : null,
+    promptMetrics?.promptOverBudgetChars
+      ? `超预算 ${promptMetrics.promptOverBudgetChars} 字符`
+      : null,
+    promptMetrics?.memoryPromptChars
+      ? `记忆入参 ${promptMetrics.memoryPromptChars} 字符`
+      : promptMetrics?.memoryChars
+        ? `记忆 ${promptMetrics.memoryChars} 字符`
+        : null,
+    promptMetrics?.memoryOmittedChars
+      ? `记忆裁剪 ${promptMetrics.memoryOmittedChars} 字符`
+      : null,
+    promptMetrics?.compressedFileSnapshotChars
+      ? `文件快照 ${promptMetrics.compressedFileSnapshotChars} 字符`
+      : null,
+    promptMetrics?.fileSnapshotOmittedChars
+      ? `文件裁剪 ${promptMetrics.fileSnapshotOmittedChars} 字符`
+      : null,
+    promptMetrics?.longMemoryCount
+      ? `长记忆 ${promptMetrics.longMemoryCount} 条`
+      : null,
+    promptMetrics?.shortMemoryCount
+      ? `短记忆 ${promptMetrics.shortMemoryCount} 条`
+      : null,
+    promptMetrics?.memoryConflictCount
+      ? `冲突 ${promptMetrics.memoryConflictCount} 条`
+      : null,
+    activeVariant?.metrics?.traceId
+      ? `trace ${activeVariant.metrics.traceId}`
+      : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -434,6 +466,10 @@ function AgentDebugPanel({
                   </div>
                   <div>耗时：{formatDuration(activeVariant.metrics?.durationMs ?? null)}</div>
                   <div>Prompt 路径：{promptStateDetail || "暂无 prompt 诊断"}</div>
+                  <div>
+                    Trace 文件：
+                    {activeVariant.metrics?.tracePath || "未开启 AGENT_TRACE_ENABLED"}
+                  </div>
                   <div>
                     相比上一版：
                     {promptDelta === null

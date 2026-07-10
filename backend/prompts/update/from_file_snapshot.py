@@ -3,6 +3,7 @@ from typing import cast
 from openai.types.chat import ChatCompletionMessageParam
 
 from prompts import system_prompt
+from prompts.budget import TextBudgetResult
 from prompts.design_session import (
     build_design_update_intent_block,
     build_design_session_prompt_block,
@@ -14,6 +15,7 @@ from prompts.image_assets import (
     extract_image_urls_from_html,
 )
 from prompts.design_system import build_design_system_prompt_block
+from prompts.memory import build_agent_memory_prompt_block
 from prompts.policies import build_selected_stack_policy, build_user_image_policy
 from prompts.prompt_types import DesignSession, IntentDecision, Stack, UserTurnInput
 from prompts.message_builder import Prompt, build_history_message
@@ -23,6 +25,11 @@ FOCUS_WINDOW_CHARS = 5000
 
 
 def _find_focus_window(content: str, focus_html: str | None) -> str | None:
+    """
+    查找聚焦窗口
+    如果聚焦HTML为空，则返回None
+    如果聚焦HTML不为空，则返回聚焦窗口
+    """
     if not focus_html:
         return None
 
@@ -49,16 +56,29 @@ def _find_focus_window(content: str, focus_html: str | None) -> str | None:
     return content[start:end].strip()
 
 
-def _compress_file_content(content: str, focus_html: str | None = None) -> str:
+def compress_file_content_for_prompt(
+    content: str, focus_html: str | None = None
+) -> TextBudgetResult:
     stripped = content.strip()
     if len(stripped) <= MAX_FILE_STATE_CHARS:
-        return stripped
+        return TextBudgetResult(
+            text=stripped,
+            original_chars=len(stripped),
+            final_chars=len(stripped),
+            omitted_chars=0,
+        )
 
     focus_window = _find_focus_window(stripped, focus_html)
     if focus_window and len(focus_window) <= MAX_FILE_STATE_CHARS:
-        return (
+        text = (
             "<!-- Focused excerpt around the targeted update -->\n"
             f"{focus_window}"
+        )
+        return TextBudgetResult(
+            text=text,
+            original_chars=len(stripped),
+            final_chars=len(text),
+            omitted_chars=max(0, len(stripped) - len(focus_window)),
         )
 
     head_chars = 2400
@@ -75,7 +95,13 @@ def _compress_file_content(content: str, focus_html: str | None = None) -> str:
         if middle
         else ""
     )
-    return f"{head}{middle_block}\n\n<!-- {max(0, omitted)} characters omitted for prompt compression -->\n\n{tail}"
+    text = f"{head}{middle_block}\n\n<!-- {max(0, omitted)} characters omitted for prompt compression -->\n\n{tail}"
+    return TextBudgetResult(
+        text=text,
+        original_chars=len(stripped),
+        final_chars=len(text),
+        omitted_chars=max(0, omitted),
+    )
 
 
 def build_update_prompt_from_file_snapshot(
@@ -95,10 +121,10 @@ def build_update_prompt_from_file_snapshot(
         or prompt.get("text", "").strip()
         or "Apply the requested update."
     )
-    compressed_content = _compress_file_content(
+    compressed_content = compress_file_content_for_prompt(
         file_state["content"],
         prompt.get("selected_element_html"),
-    )
+    ).text
     selected_stack = build_selected_stack_policy(stack)
     image_policy = build_user_image_policy(image_generation_enabled)
     design_system_block = build_design_system_prompt_block(design_system)
@@ -106,6 +132,7 @@ def build_update_prompt_from_file_snapshot(
         design_session,
         workspace_id=prompt.get("workspace_id"),
     )
+    memory_block = build_agent_memory_prompt_block(design_session)
     image_asset_block = build_image_asset_guidance_block(
         extract_image_urls_from_html(file_state["content"]),
         heading="Current image assets in the draft",
@@ -133,6 +160,7 @@ def build_update_prompt_from_file_snapshot(
             selected_stack,
             image_policy,
             design_session_block.strip(),
+            memory_block.strip(),
             multi_turn_block.strip(),
         ]
         if part.strip()

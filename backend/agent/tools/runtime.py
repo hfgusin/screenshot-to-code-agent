@@ -40,6 +40,8 @@ class AgentToolRuntime:
         should_generate_images: bool,
         openai_api_key: Optional[str],
         openai_base_url: Optional[str],
+        openai_image_api_key: Optional[str] = None,
+        openai_image_base_url: Optional[str] = None,
         gemini_api_key: Optional[str] = None,
         input_images: Optional[List[str]] = None,
         asset_base_url: str = "",
@@ -50,6 +52,8 @@ class AgentToolRuntime:
         self.should_generate_images = should_generate_images
         self.openai_api_key = openai_api_key
         self.openai_base_url = openai_base_url
+        self.openai_image_api_key = openai_image_api_key
+        self.openai_image_base_url = openai_image_base_url
         self.gemini_api_key = gemini_api_key
         self.input_images = input_images or []
         self.asset_base_url = asset_base_url
@@ -406,15 +410,15 @@ class AgentToolRuntime:
             api_key = REPLICATE_API_KEY
             base_url = None
         else:
-            if not self.openai_api_key:
+            api_key = self.openai_image_api_key or self.openai_api_key
+            base_url = self.openai_image_base_url or self.openai_base_url
+            if not api_key:
                 return ToolExecutionResult(
                     ok=False,
                     result={"error": "No API key available for image generation."},
                     summary={"error": "Missing image generation API key"},
                 )
             model = "gpt_image_2"
-            api_key = self.openai_api_key
-            base_url = self.openai_base_url
 
         generated = await process_tasks(unique_prompts, api_key, base_url, model)  # type: ignore
         merged_results: Dict[str, Dict[str, Any]] = {}
@@ -592,7 +596,9 @@ class AgentToolRuntime:
         )
 
     async def _edit_image(self, args: Dict[str, Any]) -> ToolExecutionResult:
-        if not REPLICATE_API_KEY and not self.openai_api_key:
+        image_api_key = self.openai_image_api_key or self.openai_api_key
+        image_base_url = self.openai_image_base_url or self.openai_base_url
+        if not REPLICATE_API_KEY and not image_api_key:
             return ToolExecutionResult(
                 ok=False,
                 result={
@@ -654,8 +660,8 @@ class AgentToolRuntime:
                 image_operation = "fallback"
                 result_url = await generate_image_openai(
                     prompt,
-                    self.openai_api_key or "",
-                    self.openai_base_url,
+                    image_api_key or "",
+                    image_base_url,
                     image_url=source_image_url,
                 )
         except Exception as exc:
